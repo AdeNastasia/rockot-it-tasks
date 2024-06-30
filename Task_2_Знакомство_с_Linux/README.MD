@@ -301,12 +301,29 @@
    sestatus
    ```
    ![alt text](image-13.png)
-5. Отключим Firewall:
+5. Настроим Firewall:
+   Есть два стула: отключить firewall полностью, или настроить его так, чтобы открытыми были нужные нам порты. Я изначально отключила, но интернет говорит, что второй вариант безопаснее, поэтому в итоге пробую настроить порты. Инфу про отключение добавлю как приложение.
+
+   Чтобы настроить firewall на нужные нам порты (80 и 8080), нужно ввести команды для открытия портов и перезагрузки сервиса (чтобы изменения вступили в силу):
    ```console
-   sudo systemctl stop firewalld
+   sudo firewall-cmd --permanent --add-port=80/tcp
+   sudo firewall-cmd --permanent --add-port=8080/tcp
+   sudo firewall-cmd --reload
+   ```
+   ![alt text](image-23.png)
+
+   Проверить, какие порты добавлены можно с помощью команды:
+   ```console
+   sudo firewall-cmd --list-ports
    ```
 
-6. Узнаем IP-адрес машины:
+   Пример вывода:
+   ![alt text](image-24.png)
+
+   > Приложение
+   Чтобы отключить firewall, нужно ввести команду: `sudo systemctl stop firewalld`
+
+1. Узнаем IP-адрес машины:
    ```console
    ip addr
    ```
