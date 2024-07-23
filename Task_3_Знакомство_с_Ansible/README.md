@@ -119,5 +119,5 @@ ansible-playbook -i inventory.ini  playbook-for-installing-apache-and-nginx.yml 
  ```   
 
 Результат:
-![alt text](image.png)
 
+![alt text](image.png)
