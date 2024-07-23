@@ -1,0 +1,12 @@
+- name: Install Nginx and Apache on webservers
+  hosts: webservers
+  become: yes
+  vars:
+    debian_config_dir: "~/ansible-projects/rockot-it-tasks/task_3/files/debian_configs"
+    centos_config_dir: "~/ansible-projects/rockot-it-tasks/task_3/files/centos_configs"
+
+  roles:
+    - install_nginx
+    - install_apache
+    - configure_nginx
+    - configure_apache
