@@ -43,8 +43,12 @@ sudo apt install software-properties-common
 sudo add-apt-repository --yes --update ppa:ansible/ansible
 sudo apt install ansible
 ```
-
+> В родном репо не может достучаться до архивов. 
+> Плюс, как я поняла, этот способ в любом случае позволяет установить самую свежую версию напрямую от разработчиков Ansible
+> ![alt text](image-3.png)
+ 
 2.3. Проверим, что все установилось:
+ 
 ![alt text](image-1.png)
 
 ### Шаг 3. Настройка файлов Ansible
@@ -579,112 +583,25 @@ server {
 }
 ```
 
-3.4. Создаем роли (в первой итерации я сразу создала плейбук, но он вышел большим, поэтому я пришла сюда и дописала про роли + собственно, создала их)
-
-3.4.1. Подготовим директории и файлы:
+### Шаг 4. Создаем роли 
+> Примечание: в первой итерации я сразу создала плейбук, но он вышел большим, поэтому я пришла сюда и дописала про роли + собственно, создала их
+ 
+4.1. Подготовим директории и файлы:
 ```
 mkdir -p ~/ansible-projects/rockot-it-tasks/task_3/roles
 cd ~/ansible-projects/rockot-it-tasks/task_3/roles
 
-mkdir -p install_nginx/tasks install_apache/tasks configure_nginx/tasks configure_apache/tasks
+mkdir -p configure_nginx/tasks configure_apache/tasks
 
-touch ~/ansible-projects/rockot-it-tasks/task_3/roles/install_nginx/tasks/main.yml \
-      ~/ansible-projects/rockot-it-tasks/task_3/roles/install_apache/tasks/main.yml \
-      ~/ansible-projects/rockot-it-tasks/task_3/roles/configure_nginx/tasks/main.yml \
+touch ~/ansible-projects/rockot-it-tasks/task_3/roles/configure_nginx/tasks/main.yml \
       ~/ansible-projects/rockot-it-tasks/task_3/roles/configure_apache/tasks/main.yml
 
 ```
-3.4.2. Создадим роль для установки nginx:
-```
-nano ~/ansible-projects/rockot-it-tasks/task_3/roles/install_nginx/tasks/main.yml
-```
-3.4.3. Вставим таски для этой роли:
-> Мне есть, что сказать!)
-> * Включение и добавление nginx и apache в автозагрузку не нужно, но мало ли, вдруг на целевой ОС это не идет автоматически.
-> * Для задач по включению и добавлению в автозагрузку apache я поставила `ignore_errors: yes`, ругается, потому что apache и nginx пока делять порт 80 (неуспешно, но все же). Решила, что лучше тут проигнорировать ошибки, чем выносить в отдельную таску / роль.
-> 
-
-```
-- name: Обновление пакетов на Debian
-  apt:
-    name: "*"
-    state: latest
-  when: ansible_os_family == "Debian"
-
-- name: Установка Nginx на Debian
-  apt:
-    name: nginx
-    state: present
-  when: ansible_os_family == "Debian"
-
-- name: Включение Nginx и его добавление в автозагрузку на Debian 
-  systemd:
-    name: nginx
-    state: started
-    enabled: yes
-  when: ansible_os_family == "Debian"
-
-- name: Обновление пакетов на CentOS
-  yum:
-    name: "*"
-    state: latest
-  when: ansible_os_family == "RedHat"
-
-- name: Установка Nginx на CentOS
-  yum:
-    name: nginx
-    state: present
-  when: ansible_os_family == "RedHat"
-
-- name: Включение Nginx и его добавление в автозагрузку на CentOS
-  systemd:
-    name: nginx
-    state: started
-    enabled: yes
-  when: ansible_os_family == "RedHat"
-```
-
-3.4.4. Создадим роль для установки apache:
-```
-nano ~/ansible-projects/rockot-it-tasks/task_3/roles/install_apache/tasks/main.yml
-```
-3.4.5. Вставим код:
-```
-- name: Установка Apache на Debian
-  apt:
-    name: apache2
-    state: present
-  when: ansible_os_family == "Debian"
-
-- name: Включение Apache и его добавление в автозагрузку на Debian
-  systemd:
-    name: apache2
-    state: started
-    enabled: yes
-  when: ansible_os_family == "Debian"
-  ignore_errors: yes
-
-
-- name: Установка Apache на CentOS
-  yum:
-    name: httpd
-    state: present
-  when: ansible_os_family == "RedHat"
-
-- name: Включение Apache и его добавление в автозагрузку на CentOS
-  systemd:
-    name: httpd
-    state: started
-    enabled: yes
-  when: ansible_os_family == "RedHat"
-  ignore_errors: yes
-```
-
-3.4.6. Создадим роль для конфигурации nginx:
+4.2. Создадим роль для конфигурации nginx:
 ```
 nano ~/ansible-projects/rockot-it-tasks/task_3/roles/configure_nginx/tasks/main.yml
 ```
-3.4.7. Вставим код:
+4.3. Вставим код:
 ```
 - name: Работа на Debian
   block:
@@ -727,11 +644,11 @@ nano ~/ansible-projects/rockot-it-tasks/task_3/roles/configure_nginx/tasks/main.
         state: restarted
 ```
 
-3.4.8. Создадим роль для конфигурации apache:
+4.4. Создадим роль для конфигурации apache:
 ```
 nano ~/ansible-projects/rockot-it-tasks/task_3/roles/configure_apache/tasks/main.yml
 ```
-3.4.9. Вставим код:
+4.5. Вставим код:
 ```
 - name: Работа на Debian
   block:
@@ -786,15 +703,15 @@ nano ~/ansible-projects/rockot-it-tasks/task_3/roles/configure_apache/tasks/main
       when: ansible_os_family == "RedHat"
 ```
 
-3.5. Создаем файл playbook, в котором опишем сценарий работы с удаленными серверами.
+### Шаг 5. Создаем файл playbook, в котором опишем сценарий работы с удаленными серверами.
  
-3.3.1. Создаем файл
+5.1. Создаем файл
 ```
 cd ..
 nano playbook-install-and-configure-apache-and-nginx.yml
 ```
 
-3.3.2. Вставляем код в файл:
+5.2. Вставляем код в файл:
 ```
 - name: Install Nginx and Apache on webservers
   hosts: webservers
@@ -803,22 +720,78 @@ nano playbook-install-and-configure-apache-and-nginx.yml
     debian_config_dir: "~/ansible-projects/rockot-it-tasks/task_3/files/debian_configs"
     centos_config_dir: "~/ansible-projects/rockot-it-tasks/task_3/files/centos_configs"
 
+  tasks:
+    - name: Обновление пакетов на Debian
+      apt:
+        name: "*"
+        state: latest
+      when: ansible_os_family == "Debian"
+
+    - name: Установка Nginx на Debian
+      apt:
+        name: nginx
+        state: present
+      when: ansible_os_family == "Debian"
+
+    - name: Обновление пакетов на CentOS
+      yum:
+        name: "*"
+        state: latest
+      when: ansible_os_family == "RedHat"
+
+    - name: Установка Nginx на CentOS
+      yum:
+        name: nginx
+        state: present
+      when: ansible_os_family == "RedHat"
+
   roles:
-    - install_nginx
-    - install_apache
     - configure_nginx
     - configure_apache
 
+  tasks:
+    - name: Включение Nginx и его добавление в автозагрузку на Debian
+      systemd:
+        name: nginx
+        state: started
+        enabled: yes
+      when: ansible_os_family == "Debian"
+
+    - name: Включение Apache и его добавление в автозагрузку на Debian
+      systemd:
+        name: apache2
+        state: started
+        enabled: yes
+      when: ansible_os_family == "Debian"
+
+    - name: Включение Nginx и его добавление в автозагрузку на CentOS
+      systemd:
+        name: nginx
+        state: started
+        enabled: yes
+      when: ansible_os_family == "RedHat"
+
+    - name: Включение Apache и его добавление в автозагрузку на CentOS
+      systemd:
+        name: httpd
+        state: started
+        enabled: yes
+      when: ansible_os_family == "RedHat"
+
 ```
 Краткий разбор:
-* `- name: Install Nginx and Apache on webservers` - имя сценария
-* `hosts: webservers` - указываем группу хостов, с которой будем работать (она задана в инвентори)
-* `become: yes` - все команды выполняем с правами `sudo`
-* `vars:` - описываем переменные для наших задач и ролей (по логике их лучше выносить в отделньый файл, но их тут всего 2, а файлов итак много, поэтому решила тут прописать)
-* `roles:` - пишем названия ролей и порядок, в котором хотим их запустить
+* Секция 1 - базовые настройки плейбука. Эта секция задает основные параметры для выполнения плейбука и определяет, что будет выполнено на каких хостах, с какими правами и переменными. Она включает в себя:
+  * `- name: Install Nginx and Apache on webservers` - имя плейбука (= сценария)
+  * `hosts: webservers` - указываем группу хостов, с которой будем работать (она задана в инвентори)
+  * `become: yes` - все команды выполняем с правами `sudo`
+  * `vars:` - описываем переменные для наших задач и ролей (по логике их лучше выносить в отделньый файл, но их тут всего 2, а файлов итак много, поэтому решила тут прописать)
 
-### Шаг 4. Запуск playbook
-4.1. Запускаем плейбук с нашим файлом инвентаря, указываем путь к нужному плейбуку + пишем параметр `--ask-become-pass` благодаря которому мы можем ввести пароли от удаленных серверов перед подключением (потом вводим пароли от серверов):
+* Секция 2 - основная секция выполнения плейбука. Включает в себя:
+  * `tasks:` - список задач, которые надо выполнить. Тут пишем сами задачи, как есть 
+  * `roles:` - список ролей, которые надо выполнить. Тут пишем названия ролей и порядок, в котором хотим их запустить
+   
+### Шаг 6. Запуск playbook
+6.1. Запускаем плейбук с нашим файлом инвентаря, указываем путь к нужному плейбуку + пишем параметр `--ask-become-pass` благодаря которому мы можем ввести пароли от удаленных серверов перед подключением (потом вводим пароли от серверов):
 ```
 ansible-playbook -i inventory.ini  playbook-install-and-configure-apache-and-nginx.yml --ask-become-pass
  ```   
@@ -826,3 +799,4 @@ ansible-playbook -i inventory.ini  playbook-install-and-configure-apache-and-ngi
 Результат:
  
 ![alt text](<Group 323.png>)
+
