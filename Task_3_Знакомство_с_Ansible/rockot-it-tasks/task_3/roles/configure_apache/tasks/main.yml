@@ -1,8 +1,9 @@
+---
 - name: Работа на Debian
   block:
     - name: Обновление конфигурации apache - изменение порта с 80 на 8080 (полная замена конфига) - Debian
       copy:
-        src: "{{ debian_config_dir }}/ports.conf"
+        src: "{{ config_dir }}/debian_ports.conf"
         dest: /etc/apache2/ports.conf
         owner: root
         group: root
@@ -11,7 +12,7 @@
 
     - name: Обновление конфигурации виртуальных хостов apache - изменение порта с 80 на 8080 (полная замена конфига) - Debian
       copy:
-        src: "{{ debian_config_dir }}/000-default.conf"
+        src: "{{ config_dir }}/debian_000-default.conf"
         dest: /etc/apache2/sites-available/000-default.conf
         owner: root
         group: root
@@ -28,7 +29,7 @@
   block:
     - name: Обновление конфигурации виртуальных хостов apache - изменение порта с 80 на 8080 (полная замена конфига) - Centos
       copy:
-        src: "{{ centos_config_dir }}/httpd.conf"
+        src: "{{ config_dir }}/centos_httpd.conf"
         dest: /etc/httpd/conf/httpd.conf
         owner: root
         group: root
@@ -37,7 +38,7 @@
 
     - name: Создание нового файла конфигурации виртуального хоста (с портом 8080) - Centos
       copy:
-        src: "{{ centos_config_dir }}/my_virtualhost.conf"
+        src: "{{ config_dir }}/centos_my_virtualhost.conf"
         dest: /etc/httpd/conf.d/my_virtualhost.conf
         owner: root
         group: root

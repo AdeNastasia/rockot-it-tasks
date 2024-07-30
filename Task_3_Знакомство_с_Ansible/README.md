@@ -75,26 +75,28 @@ debian_server ansible_host=192.168.1.70 ansible_user=kaya
 Краткий разбор:
 * `[webservers]` - название группы серверов
 * `centos_server` и `debian_server` - имена серверов, чтобы было проще их различать 
-* `ansible_host=192.168.1.69` и `ansible_host=192.168.1.70` - реальные ip серверов, на которые мы будем посылать команды
+* `ansible_host=192.168.1.69` и `ansible_host=192.168.1.70` - реальные ip серверов, на которые мы будем посылать команды (при необходимости `ip` надо заменить)
 * `ansible_user=kaya` - пользователь, от имени которого мы будем подключаться к серверам по SSH (при смене окружения надо заменить `kaya` на другого пользователя, хотя  я бы не меняла..)
 
 3.2.3. Сохраняем изменения, выходим
 
 3.3. Далее я выбрала менять файлы на серверах на заранее подготовленные. Поэтому подготовим эти файлы.
  
-3.3.1. Создадим две директории для новых конфигов:
+3.3.1. Создадим директорию для новых конфигов:
+> Раньше я создавала 2 директории для конфигов, но когда у меня возник общий конфиг для двух ОС решила ограничиться одной директорией. Также мне кажется, это удобнее в поддержке (к примеру, в анализе поведения машин). Что удобнее смотреть в одной директории, чем прыгать между двумя разными. Интересно, кстати, насколько это верно или от случая к случаю?
+ 
 ```
-mkdir -p files/debian_configs  files/centos_configs 
+mkdir -p files/configs 
 ```
-
+ 
 3.3.2. Подготовим конфиги для дебиан. Сперва перейдем в директорию:
 ```
-cd files/debian_configs
+cd files/configs
 ```
 
 3.3.2.1. Создаем новый файл конфигурации apache (я конечное название сделала таким же, как название файла по умолчанию в дебиан при установке апач)
 ```
-nano ports.conf
+nano debian_ports.conf
 ```
 3.3.2.2. Вставляем текст (по сути я изменила только порт с 80 на 8080, но в теории, если кто-то на сервер полезет, логичнее, чтобы файл был полноценным, поэтому я скопировала комменты и код из ориг. файла):
 ```
@@ -114,7 +116,7 @@ Listen 8080
 ```
 3.3.2.3. Создаем новый файл конфигурации виртуальных хостов apache:
 ```
-nano 000-default.conf
+nano debian_000-default.conf
 ```
 3.3.2.4. Вставляем текст (логикак как выше - скопировала из ориг. файла и изменила порт):
 ```
@@ -150,40 +152,55 @@ nano 000-default.conf
 ```
 
 3.3.2.5. Cоздаем дополнительный конфиг для nginx (его потом сделаем основным):
+> Хотя как выяснилось на этом этапе мы создаем не сам конфиг, а шаблон, на основе которого ansible сформирует конфигурационный файл, который потом скопирует на целевой хост. 
+> Тут сразу делаем для дебиан и центос, потому что конфиг не отличается
 ```
-nano load_balancer.conf
+nano debian_and_centos_load_balancer.conf.j2
 ```
+> Поясню. Тут мы специально пишем в формате "load_balancer.conf.j2":
+> * `j2` - чтобы указать, что это шаблон
+> * `conf` - чтобы явно указать, что конечный файл будет `load_balancer.conf`
+ 
 3.3.2.6. Вставляем конфигурацию Nginx для проксирования запросов на Apache:
 ```
 upstream apache_servers {
-  server 192.168.1.70:8080; 
-  server 192.168.1.69:8080; 
+  {% for host in groups['webservers'] %}
+    server {{ hostvars[host]['ansible_host'] }}:8080;
+  {% endfor %}
 }
 
 server {
-  listen 80;  
-  server_name 192.168.1.70;  
+   listen 80;
+   server_name {{ ansible_default_ipv4.address }}; 
 
-  location / {
-    proxy_pass http://apache_servers;  
-    proxy_set_header Host $host;
-    proxy_set_header X-Real-IP $remote_addr;
-    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-    proxy_set_header X-Forwarded-Proto $scheme;
-  }
+   location / {
+      proxy_pass http://apache_servers;
+      proxy_set_header Host $host;
+      proxy_set_header X-Real-IP $remote_addr;
+      proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+      proxy_set_header X-Forwarded-Proto $scheme;
+   }
 }
 ```
-
+> Чуть-чуть разбор шаблона:
+> * Эта часть
+>   ```
+>   {% for every_host in groups['webservers'] %}
+>     server {{ hostvars[host]['ansible_host'] }}:8080;
+>   {% endfor %}
+>   ```
+>   аналогична тому, как если бы мы написали ip хостов напрямую:
+>   ```
+>    server 192.168.1.69:8080;
+>    server 192.168.1.70:8080;
+>   ```
+> * А здесь `server_name {{ ansible_default_ipv4.address }}` мы к переменной `server_name` подставляем ip-адрес управляюей машины
+ 
 3.3.3. Подготовим конфиги для centos.
  
-Т.к. после предыдущего шага мы находимся в `~/ansible-projects/rockot-it-tasks/task_3/files/debian_configs`, то поднимаемся наверх и переходим в нужную директорию:
-```
-cd ../centos_configs
-```
-
 3.3.3.1. Создаем новый файл конфигурации apache (здесь я конечное название тоже сделала таким же, как название файла по умолчанию в центос при установке апач)
 ```
-nano httpd.conf
+nano centos_httpd.conf
 ```
 3.3.2.2. Вставляем текст (все то же - и код и комменты перенесла из ориг. файла, изменила только порт):
 ```
@@ -546,7 +563,7 @@ IncludeOptional conf.d/*.conf
 ```
 3.3.2.3. Создаем новый файл конфигурации виртуальных хостов apache: 
 ```
-nano my_virtualhost.conf
+nano centos_my_virtualhost.conf
 ```
 3.3.2.4. Вставляем саму конфигурацию:
 ```
@@ -556,31 +573,6 @@ nano my_virtualhost.conf
    ErrorLog "/var/log/httpd/error_log"
    CustomLog "/var/log/httpd/access_log" common
 </VirtualHost>
-```
-
-3.3.2.5. Cоздаем дополнительный конфиг для nginx (его потом сделаем основным)
-```
-nano load_balancer.conf
-```
-3.3.2.6. Вставляем конфигурацию Nginx для проксирования запросов на Apache:
-```
-upstream apache_servers {
-   server 192.168.1.69:8080;
-   server 192.168.1.70:8080;
-}
-
-server {
-   listen 80;
-   server_name 192.168.1.69; 
-
-   location / {
-      proxy_pass http://apache_servers;
-      proxy_set_header Host $host;
-      proxy_set_header X-Real-IP $remote_addr;
-      proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-      proxy_set_header X-Forwarded-Proto $scheme;
-   }
-}
 ```
 
 ### Шаг 4. Создаем роли 
@@ -603,12 +595,13 @@ nano ~/ansible-projects/rockot-it-tasks/task_3/roles/configure_nginx/tasks/main.
 ```
 4.3. Вставим код:
 ```
+---
 - name: Работа на Debian
   block:
 
-    - name: Создание доп. конфига для Nginx в /etc/nginx/sites-available на Debian
-      copy:
-        src: "{{ debian_config_dir }}/load_balancer.conf"
+    - name: Создание доп. конфига для Nginx в /etc/nginx/sites-available на Debian на основе шаблона
+      template:
+        src: "{{ config_dir }}/debian_and_centos_load_balancer.conf.j2"
         dest: /etc/nginx/sites-available/load_balancer.conf
         owner: root
         group: root
@@ -626,9 +619,9 @@ nano ~/ansible-projects/rockot-it-tasks/task_3/roles/configure_nginx/tasks/main.
 - name: Работа на CentOS
   block:
 
-    - name: Создание доп. конфига для Nginx в /etc/nginx/conf.d на CentOS
-      copy:
-        src: "{{ centos_config_dir }}/load_balancer.conf"
+    - name: Создание доп. конфига для Nginx в /etc/nginx/conf.d на CentOS на основе шаблона
+      template:
+        src: "{{ config_dir }}/debian_and_centos_load_balancer.conf.j2"
         dest: /etc/nginx/conf.d/load_balancer.conf
         owner: root
         group: root
@@ -650,11 +643,12 @@ nano ~/ansible-projects/rockot-it-tasks/task_3/roles/configure_apache/tasks/main
 ```
 4.5. Вставим код:
 ```
+---
 - name: Работа на Debian
   block:
     - name: Обновление конфигурации apache - изменение порта с 80 на 8080 (полная замена конфига) - Debian
       copy:
-        src: "{{ debian_config_dir }}/ports.conf"
+        src: "{{ config_dir }}/debian_ports.conf"
         dest: /etc/apache2/ports.conf
         owner: root
         group: root
@@ -663,7 +657,7 @@ nano ~/ansible-projects/rockot-it-tasks/task_3/roles/configure_apache/tasks/main
 
     - name: Обновление конфигурации виртуальных хостов apache - изменение порта с 80 на 8080 (полная замена конфига) - Debian
       copy:
-        src: "{{ debian_config_dir }}/000-default.conf"
+        src: "{{ config_dir }}/debian_000-default.conf"
         dest: /etc/apache2/sites-available/000-default.conf
         owner: root
         group: root
@@ -680,7 +674,7 @@ nano ~/ansible-projects/rockot-it-tasks/task_3/roles/configure_apache/tasks/main
   block:
     - name: Обновление конфигурации виртуальных хостов apache - изменение порта с 80 на 8080 (полная замена конфига) - Centos
       copy:
-        src: "{{ centos_config_dir }}/httpd.conf"
+        src: "{{ config_dir }}/centos_httpd.conf"
         dest: /etc/httpd/conf/httpd.conf
         owner: root
         group: root
@@ -689,7 +683,7 @@ nano ~/ansible-projects/rockot-it-tasks/task_3/roles/configure_apache/tasks/main
 
     - name: Создание нового файла конфигурации виртуального хоста (с портом 8080) - Centos
       copy:
-        src: "{{ centos_config_dir }}/my_virtualhost.conf"
+        src: "{{ config_dir }}/centos_my_virtualhost.conf"
         dest: /etc/httpd/conf.d/my_virtualhost.conf
         owner: root
         group: root
@@ -705,7 +699,7 @@ nano ~/ansible-projects/rockot-it-tasks/task_3/roles/configure_apache/tasks/main
 
 ### Шаг 5. Создаем файл playbook, в котором опишем сценарий работы с удаленными серверами.
  
-5.1. Создаем файл
+5.1. Создаем файл playbook
 ```
 cd ..
 nano playbook-install-and-configure-apache-and-nginx.yml
@@ -713,12 +707,11 @@ nano playbook-install-and-configure-apache-and-nginx.yml
 
 5.2. Вставляем код в файл:
 ```
-- name: Install Nginx and Apache on webservers
+---
+# Первый play
+- name: Установка и конфигурирование Nginx и Apache на группе хостов webservers
   hosts: webservers
   become: yes
-  vars:
-    debian_config_dir: "~/ansible-projects/rockot-it-tasks/task_3/files/debian_configs"
-    centos_config_dir: "~/ansible-projects/rockot-it-tasks/task_3/files/centos_configs"
 
   tasks:
     - name: Обновление пакетов на Debian
@@ -730,6 +723,12 @@ nano playbook-install-and-configure-apache-and-nginx.yml
     - name: Установка Nginx на Debian
       apt:
         name: nginx
+        state: present
+      when: ansible_os_family == "Debian"
+
+    - name: Установка Apache на Debian
+      apt:
+        name: apache2
         state: present
       when: ansible_os_family == "Debian"
 
@@ -745,9 +744,27 @@ nano playbook-install-and-configure-apache-and-nginx.yml
         state: present
       when: ansible_os_family == "RedHat"
 
+    - name: Установка Apache на CentOS
+      yum:
+        name: httpd
+        state: present
+      when: ansible_os_family == "RedHat"
+
+# Второй play для выполнения ролей
+- name: Выполнение ролей для конфигурации Nginx и Apache
+  hosts: webservers
+  become: yes
+  vars:
+    config_dir: "~/ansible-projects/rockot-it-tasks/task_3/files/configs"
+
   roles:
     - configure_nginx
     - configure_apache
+
+# Третий play
+- name: Включение и добавление в автозагрузку Nginx и Apache на группе хостов webservers
+  hosts: webservers
+  become: yes
 
   tasks:
     - name: Включение Nginx и его добавление в автозагрузку на Debian
@@ -777,18 +794,19 @@ nano playbook-install-and-configure-apache-and-nginx.yml
         state: started
         enabled: yes
       when: ansible_os_family == "RedHat"
-
 ```
 Краткий разбор:
-* Секция 1 - базовые настройки плейбука. Эта секция задает основные параметры для выполнения плейбука и определяет, что будет выполнено на каких хостах, с какими правами и переменными. Она включает в себя:
-  * `- name: Install Nginx and Apache on webservers` - имя плейбука (= сценария)
-  * `hosts: webservers` - указываем группу хостов, с которой будем работать (она задана в инвентори)
-  * `become: yes` - все команды выполняем с правами `sudo`
-  * `vars:` - описываем переменные для наших задач и ролей (по логике их лучше выносить в отделньый файл, но их тут всего 2, а файлов итак много, поэтому решила тут прописать)
+> Я так поняла, есть несколько способов выполнить и роли, и задачи в одном плейбуке, я решила разделить из по разным play.
+> Разберу play в общих чертах:
+> * Секция 1 - базовые настройки плейбука. Эта секция задает основные параметры для выполнения плейбука и определяет, что будет выполнено на каких хостах, с какими правами и переменными. Она включает в себя:
+>   /* `- name: Установка и конфигурирование Nginx и Apache на группе хостов webservers` - имя сценария
+>   * `hosts: webservers` - указываем группу хостов, с которой будем работать (она задана в инвентори)
+>   * `become: yes` - все команды выполняем с правами `sudo`
+>   * `vars:` - описываем переменные для наших задач и ролей (по логике их лучше выносить в отделньый файл, но их тут всего 2, а файлов итак много, поэтому решила тут прописать)
 
-* Секция 2 - основная секция выполнения плейбука. Включает в себя:
-  * `tasks:` - список задач, которые надо выполнить. Тут пишем сами задачи, как есть 
-  * `roles:` - список ролей, которые надо выполнить. Тут пишем названия ролей и порядок, в котором хотим их запустить
+> * Секция 2 - основная секция выполнения плейбука. Включает в себя:
+>   * `tasks:` - список задач, которые надо выполнить. Тут пишем сами задачи, как есть 
+>   * `roles:` - список ролей, которые надо выполнить. Тут пишем названия ролей и порядок, в котором хотим их запустить
    
 ### Шаг 6. Запуск playbook
 6.1. Запускаем плейбук с нашим файлом инвентаря, указываем путь к нужному плейбуку + пишем параметр `--ask-become-pass` благодаря которому мы можем ввести пароли от удаленных серверов перед подключением (потом вводим пароли от серверов):
@@ -798,5 +816,5 @@ ansible-playbook -i inventory.ini  playbook-install-and-configure-apache-and-ngi
 
 Результат:
  
-![alt text](<Group 323.png>)
+![alt text](image-4.png)
 

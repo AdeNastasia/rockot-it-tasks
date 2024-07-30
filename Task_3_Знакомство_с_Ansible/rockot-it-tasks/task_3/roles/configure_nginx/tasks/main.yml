@@ -1,9 +1,10 @@
+---
 - name: Работа на Debian
   block:
 
-    - name: Создание доп. конфига для Nginx в /etc/nginx/sites-available на Debian
-      copy:
-        src: "{{ debian_config_dir }}/load_balancer.conf"
+    - name: Создание доп. конфига для Nginx в /etc/nginx/sites-available на Debian на основе шаблона
+      template:
+        src: "{{ config_dir }}/debian_and_centos_load_balancer.conf.j2"
         dest: /etc/nginx/sites-available/load_balancer.conf
         owner: root
         group: root
@@ -21,9 +22,9 @@
 - name: Работа на CentOS
   block:
 
-    - name: Создание доп. конфига для Nginx в /etc/nginx/conf.d на CentOS
-      copy:
-        src: "{{ centos_config_dir }}/load_balancer.conf"
+    - name: Создание доп. конфига для Nginx в /etc/nginx/conf.d на CentOS на основе шаблона
+      template:
+        src: "{{ config_dir }}/debian_and_centos_load_balancer.conf.j2"
         dest: /etc/nginx/conf.d/load_balancer.conf
         owner: root
         group: root
