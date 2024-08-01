@@ -1,0 +1,18 @@
+upstream apache_servers {
+  {% for host in groups['webservers'] %}
+    server {{ hostvars[host]['ansible_host'] }}:8080;
+  {% endfor %}
+}
+
+server {
+   listen 80;
+   server_name {{ ansible_default_ipv4.address }}; 
+
+   location / {
+      proxy_pass http://apache_servers;
+      proxy_set_header Host $host;
+      proxy_set_header X-Real-IP $remote_addr;
+      proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+      proxy_set_header X-Forwarded-Proto $scheme;
+   }
+}

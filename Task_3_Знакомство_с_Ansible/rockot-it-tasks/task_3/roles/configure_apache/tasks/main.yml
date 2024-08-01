@@ -1,0 +1,52 @@
+---
+- name: Работа на Debian
+  block:
+    - name: Обновление конфигурации apache - изменение порта с 80 на 8080 (полная замена конфига) - Debian
+      copy:
+        src: "{{ config_dir }}/debian_ports.conf"
+        dest: /etc/apache2/ports.conf
+        owner: root
+        group: root
+        mode: '0644'
+      when: ansible_os_family == "Debian"
+
+    - name: Обновление конфигурации виртуальных хостов apache - изменение порта с 80 на 8080 (полная замена конфига) - Debian
+      copy:
+        src: "{{ config_dir }}/debian_000-default.conf"
+        dest: /etc/apache2/sites-available/000-default.conf
+        owner: root
+        group: root
+        mode: '0644'
+      when: ansible_os_family == "Debian"
+
+    - name: Перезапуск apache на Debian
+      service:
+        name: apache2
+        state: restarted
+      when: ansible_os_family == "Debian"
+
+- name: Работа на CentOS
+  block:
+    - name: Обновление конфигурации виртуальных хостов apache - изменение порта с 80 на 8080 (полная замена конфига) - Centos
+      copy:
+        src: "{{ config_dir }}/centos_httpd.conf"
+        dest: /etc/httpd/conf/httpd.conf
+        owner: root
+        group: root
+        mode: '0644'
+      when: ansible_os_family == "RedHat"
+
+    - name: Создание нового файла конфигурации виртуального хоста (с портом 8080) - Centos
+      copy:
+        src: "{{ config_dir }}/centos_my_virtualhost.conf"
+        dest: /etc/httpd/conf.d/my_virtualhost.conf
+        owner: root
+        group: root
+        mode: '0644'
+      when: ansible_os_family == "RedHat"
+
+    - name: Перезапуск apache (httpd) на CentOS
+      service:
+        name: httpd
+        state: restarted
+      when: ansible_os_family == "RedHat"
