@@ -22,6 +22,12 @@ services:
       context: debian
     hostname: upstream-debian # обновила название для ясности
     restart: unless-stopped
+    environment:
+      APACHE_RUN_USER: ${APACHE_RUN_USER}
+      APACHE_RUN_GROUP: ${APACHE_RUN_GROUP}
+      APACHE_LOG_DIR: ${APACHE_LOG_DIR}
+      APACHE_RUN_DIR: ${APACHE_RUN_DIR}
+      APACHE_PID_FILE: ${APACHE_PID_FILE}
     volumes:
       - ./hello_apache_page:/var/www/html
 
