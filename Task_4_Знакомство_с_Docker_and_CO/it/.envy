@@ -1,0 +1,5 @@
+# Переменные проекта.
+
+# Внешний порт фронта
+API_PORT=8080
+DOCUMENT_ROOT=/var/www/html

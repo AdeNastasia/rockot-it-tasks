@@ -1,0 +1,120 @@
+time="2024-09-02T21:19:34+03:00" level=warning msg="/home/user/rockot-it-tasks/rockot-it-tasks/Task_4_Знакомство_с_Docker_and_CO/it/docker-compose.yml: the attribute `version` is obsolete, it will be ignored, please remove it to avoid potential confusion"
+#0 building with "default" instance using docker driver
+
+#1 [upstream-almalinux internal] load build definition from Dockerfile
+#1 transferring dockerfile: 299B done
+#1 DONE 0.1s
+
+#2 [upstream-debian internal] load build definition from Dockerfile
+#2 transferring dockerfile: 1.14kB 0.0s done
+#2 DONE 0.1s
+
+#3 [upstream-almalinux internal] load metadata for docker.io/library/almalinux:latest
+#3 ...
+
+#4 [upstream-debian internal] load metadata for docker.io/library/debian:bookworm-backports
+#4 DONE 0.8s
+
+#3 [upstream-almalinux internal] load metadata for docker.io/library/almalinux:latest
+#3 DONE 0.9s
+
+#5 [upstream-debian internal] load .dockerignore
+#5 transferring context: 2B done
+#5 DONE 0.1s
+
+#6 [upstream-almalinux internal] load .dockerignore
+#6 transferring context: 2B done
+#6 DONE 0.1s
+
+#7 [upstream-debian 1/7] FROM docker.io/library/debian:bookworm-backports@sha256:5a8d7b752928135ad6ac08c8969dfe5edf764061fc64f34575d21e83c0976ab0
+#7 DONE 0.0s
+
+#8 [upstream-debian 3/7] RUN apt -y install --no-install-recommends apache2
+#8 CACHED
+
+#9 [upstream-debian 4/7] RUN apt -y install --no-install-recommends nano
+#9 CACHED
+
+#10 [upstream-debian 6/7] RUN apt clean
+#10 CACHED
+
+#11 [upstream-debian 5/7] RUN apt -y install --no-install-recommends vim-tiny
+#11 CACHED
+
+#12 [upstream-debian 2/7] RUN apt update
+#12 CACHED
+
+#13 [upstream-debian 7/7] RUN rm -rf /var/lib/apt/lists/*
+#13 CACHED
+
+#14 [upstream-almalinux 1/2] FROM docker.io/library/almalinux:latest@sha256:ff4f72c2c65badbc7deea85a035d13b6fc5160b97777939e97479921c57a3cd7
+#14 DONE 0.0s
+
+#15 [upstream-almalinux 2/2] RUN yum update -y &&     yum install httpd -y &&     yum install nano -y &&     yum install vim-minimal -y &&     yum clean all &&     rm -rf /var/cache/yum
+#15 CACHED
+
+#16 [upstream-almalinux] exporting to image
+#16 exporting layers done
+#16 writing image sha256:bbba7251032879db09f289a69cb1881e6228379a1536be57edf41aedc3366d9d 0.0s done
+#16 naming to docker.io/library/upstream-almalinux
+#16 naming to docker.io/library/upstream-almalinux 0.0s done
+#16 DONE 0.1s
+
+#17 [upstream-debian] exporting to image
+#17 exporting layers done
+#17 writing image sha256:0bebf5a76b893df6b220ba1bd57e4112b032626a30f3c9917078b15f17de17e7 0.0s done
+#17 naming to docker.io/library/upstream-debian 0.0s done
+#17 DONE 0.1s
+
+#18 [upstream-debian] resolving provenance for metadata file
+#18 DONE 0.0s
+
+#19 [upstream-almalinux] resolving provenance for metadata file
+#19 DONE 0.0s
+
+#20 [nginx internal] load build definition from Dockerfile
+#20 transferring dockerfile: 713B done
+#20 DONE 0.0s
+
+#21 [nginx internal] load metadata for docker.io/library/nginx:1.24.0
+#21 DONE 1.3s
+
+#22 [nginx internal] load .dockerignore
+#22 transferring context: 2B done
+#22 DONE 0.0s
+
+#23 [nginx 1/3] FROM docker.io/library/nginx:1.24.0@sha256:f6daac2445b0ce70e64d77442ccf62839f3f1b4c24bf6746a857eff014e798c8
+#23 DONE 0.0s
+
+#24 [nginx internal] load build context
+#24 transferring context: 34B done
+#24 DONE 0.0s
+
+#25 [nginx 2/3] RUN apt update &&    apt -y install --no-install-recommends         nano         vim-tiny &&    apt clean &&    rm -rf /var/lib/apt/lists/*
+#25 CACHED
+
+#26 [nginx 3/3] COPY default.conf /etc/nginx/conf.d/
+#26 CACHED
+
+#27 [nginx] exporting to image
+#27 exporting layers done
+#27 writing image sha256:cd64839f406ee96f6db7753213c1961f2ee1deb2e4eff22036aa82ae581a6e7f 0.0s done
+#27 naming to docker.io/library/front-nginx 0.0s done
+#27 DONE 0.1s
+
+#28 [nginx] resolving provenance for metadata file
+#28 DONE 0.0s
+ Network it_default  Creating
+ Network it_default  Created
+ Container it-upstream-debian-1  Creating
+ Container it-upstream-almalinux-1  Creating
+ Container it-upstream-debian-1  Created
+ Container it-upstream-almalinux-1  Created
+ Container it-nginx-1  Creating
+ Container it-nginx-1  Created
+ Container it-upstream-almalinux-1  Starting
+ Container it-upstream-debian-1  Starting
+ Container it-upstream-almalinux-1  Started
+ Container it-upstream-debian-1  Started
+ Container it-nginx-1  Starting
+ Container it-nginx-1  Started
