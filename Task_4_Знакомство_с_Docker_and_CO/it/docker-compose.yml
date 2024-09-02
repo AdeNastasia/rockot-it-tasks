@@ -8,9 +8,10 @@ services:
     hostname: front-nginx
     restart: unless-stopped
     ports:
-      - ${API_PORT}:80
+      - ${API_PORT}:${API_PORT_NGINX} # обновила 80 на ${API_PORT_NGINX}
     environment:
       API_PORT: ${API_PORT}
+      API_PORT_NGINX: ${API_PORT_NGINX} # эту переменную тоже прокидываем в контейнер для конфига nginx
     depends_on:
       - upstream-debian
       - upstream-almalinux

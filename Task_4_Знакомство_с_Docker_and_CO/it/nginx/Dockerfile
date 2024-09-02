@@ -1,7 +1,7 @@
 FROM nginx:1.24.0
 
 ARG DEBIAN_FRONTEND=noninteractive
-ARG API_PORT
+
 LABEL maintainer="v.pukin@test.ru"
 
 RUN apt update &&\
@@ -11,8 +11,10 @@ RUN apt update &&\
     apt clean &&\
     rm -rf /var/lib/apt/lists/*
 
-# Вопрос со звёздочкой - хочу сделать единый файл конфига для debian и centos, как?
 COPY default.conf /etc/nginx/conf.d/
 
-# Хотели менять переменную порта, но что-то не сложилось. Можно поиспользовать в проекте.
-# CMD sed -i "s/API_PORT_REPLACE/${API_PORT}/" /etc/nginx/conf.d/default.conf && \
+# Образ nginx:1.24.0 сам запустит контейнер в foreground режиме
+# Т.к. мы явно испольузем CMD, в последней строчке добавила включение nginx в foreground-режиме
+# Выделила новую переменную для порта NGINX - API_PORT_NGINX (в .env файле) 
+CMD sed -i "s/API_PORT_NGINX/${API_PORT_NGINX}/" /etc/nginx/conf.d/default.conf && \
+    nginx -g 'daemon off;' 
