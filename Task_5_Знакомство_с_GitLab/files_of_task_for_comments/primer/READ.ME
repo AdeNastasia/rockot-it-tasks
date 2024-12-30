@@ -1,0 +1,60 @@
+0) Если не работает резолв, то на локалхосте/одном сервере нужно расскоментировать секцию gitlab-runner
+# debugging on localhost и прописать там правильную пару ip/хост.
+
+1) Запуск
+docker-compose up -d
+
+2) Регистрация раннера
+а) Создаём ключ (один раз для раннеров одного типа)
+http://example.local/admin/runners/new
+Вывод:
+gitlab-runner register  --url http://example.local  --token glrt-vYK5REMU9Wk2-gMA2VxX
+
+б) Подключаемся к раненру (один раз)
+docker exec -it unity_gitlab-runner_1 bash
+
+gitlab-runner register \
+  --non-interactive \
+  --url "http://example.local/" \
+  --token "glrt-vYK5REMU9Wk2-gMA2VxX" \
+  --executor "docker" \
+  --docker-image alpine:latest \
+  --description "docker-runner"
+
+3) Создаём проект
+http://example.local/projects/new
+
+
+4) И всё равно не работает в едином компоуз, добавляем костылей. Строка    network_mode = "host"
+
+cat /etc/gitlab-runner/config.toml
+
+concurrent = 1
+check_interval = 0
+shutdown_timeout = 0
+
+[session_server]
+  session_timeout = 1800
+
+[[runners]]
+  name = "docker-runner"
+  url = "http://example.local/"
+  id = 1
+  token = "glrt-vYK5REMU9Wk2-gMA2VxX"
+  token_obtained_at = 2023-08-01T11:44:50Z
+  token_expires_at = 0001-01-01T00:00:00Z
+  executor = "docker"
+  [runners.cache]
+    MaxUploadedArchiveSize = 0
+  [runners.docker]
+    tls_verify = false
+    image = "alpine:latest"
+    privileged = false
+    disable_entrypoint_overwrite = false
+    oom_kill_disable = false
+    disable_cache = false
+    volumes = ["/cache"]
+    shm_size = 0
+    network_mode = "host" # чтоб резолвилось на локалхосте.
+    pull_policy = ["if-not-present"] # чтоб не выкачивать образ по новой
+
