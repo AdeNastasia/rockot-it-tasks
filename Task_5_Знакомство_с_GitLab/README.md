@@ -1103,16 +1103,60 @@ create_artifact:
     - docker-compose
   stage: artifact
   script:
-    - >
-      cp -f $DIRECTORY_WITH_DOCKER_COMPOSE_YAML/docker-compose.yml $PREBUILT_COMPOSE &&
-      sed -i "s|build:\s*context:.*nginx|image: $REGISTRY/front-nginx|" $PREBUILT_COMPOSE &&
-      sed -i "s|build:\s*context:.*debian|image: $REGISTRY/upstream-debian|" $PREBUILT_COMPOSE &&
-      sed -i "s|build:\s*context:.*almalinux|image: $REGISTRY/upstream-almalinux|" $PREBUILT_COMPOSE &&
-      echo "prebuilt-compose.yml создан и обновлён"
+    - |
+      cp -f $DIRECTORY_WITH_DOCKER_COMPOSE_YAML/docker-compose.yml \
+      $PREBUILT_COMPOSE
+    - |
+      sed -i "s|build:\s*context:.*nginx|image: $REGISTRY/front-nginx|" \
+      $PREBUILT_COMPOSE
+    - |
+      sed -i "s|build:\s*context:.*debian|image: $REGISTRY/upstream-debian|" \
+      $PREBUILT_COMPOSE
+    - |
+      sed -i "s|build:\s*context:.*almalinux|image: $REGISTRY/upstream-almalinux|" \
+      $PREBUILT_COMPOSE
+    - echo "prebuilt-compose.yml создан и обновлён"
   artifacts:
     paths:
       - Task_4_Знакомство_с_Docker_and_CO/it/prebuilt-docker-compose.yml
 ```
+> В первой версии решения написала скрипт не отдельными командами, а единой.
+>  
+> Вместо
+> ```
+>   script:
+>    - |
+>      cp -f $DIRECTORY_WITH_DOCKER_COMPOSE_YAML/docker-compose.yml \
+>      $PREBUILT_COMPOSE
+>    - |
+>      sed -i "s|build:\s*context:.*nginx|image: $REGISTRY/front-nginx|" \
+>      $PREBUILT_COMPOSE
+>    - |
+>      sed -i "s|build:\s*context:.*debian|image: $REGISTRY/upstream-debian|" \
+>      $PREBUILT_COMPOSE
+>    - |
+>      sed -i "s|build:\s*context:.*almalinux|image: $REGISTRY/upstream-almalinux|" \
+>      $PREBUILT_COMPOSE
+>    - echo "prebuilt-compose.yml создан и обновлён"
+> ```
+>
+> Написала так:
+> ```
+>   script:     - >
+>      cp -f $DIRECTORY_WITH_DOCKER_COMPOSE_YAML/docker-compose.yml $PREBUILT_COMPOSE &&
+>      sed -i "s|build:\s*context:.*nginx|image: $REGISTRY/front-nginx|" $PREBUILT_COMPOSE &&
+>      sed -i "s|build:\s*context:.*debian|image: $REGISTRY/upstream-debian|" $PREBUILT_COMPOSE &&
+>      sed -i "s|build:\s*context:.*almalinux|image: $REGISTRY/upstream-almalinux|" $PREBUILT_COMPOSE &&
+>      echo "prebuilt-compose.yml создан и обновлён"
+> ```
+> Причина: Если просто написать команды по строчкам, то пайплайн не запустится из-за ошибки синтаксиса:
+>  
+> ![image](https://github.com/user-attachments/assets/769598ee-c2d0-4f78-bc82-8c4372ada1b1)
+>
+> Я так понимаю, это из-за того, что строки длинные. Поэтому надо либо единой командой, либо по строчкам, но с переносом строки. По строчкам удобнее, согласна.
+> 
+> P.S. В файлах проекта (архив и файлы для комментов) записана старая версия скрипта (единой командой), но новую протестила тоже
+
 
 9.2.9. Отправим изменения в репо:
 ```
