@@ -1,0 +1,41 @@
+version: "2.4"
+
+services:
+  nginx:
+    image: front-nginx
+    build:
+      context: nginx
+    hostname: front-nginx
+    restart: unless-stopped
+    ports:
+      - ${API_PORT}:${API_PORT_NGINX} # обновила 80 на ${API_PORT_NGINX}
+    environment:
+      API_PORT: ${API_PORT}
+      API_PORT_NGINX: ${API_PORT_NGINX} # эту переменную тоже прокидываем в контейнер для конфига nginx
+    depends_on:
+      - upstream-debian
+      - upstream-almalinux
+
+  upstream-debian:
+    image: upstream-debian # обновила название для ясности
+    build:
+      context: debian
+    hostname: upstream-debian # обновила название для ясности
+    restart: unless-stopped
+    environment:
+      APACHE_RUN_USER: ${APACHE_RUN_USER}
+      APACHE_RUN_GROUP: ${APACHE_RUN_GROUP}
+      APACHE_LOG_DIR: ${APACHE_LOG_DIR}
+      APACHE_RUN_DIR: ${APACHE_RUN_DIR}
+      APACHE_PID_FILE: ${APACHE_PID_FILE}
+    volumes:
+      - ./hello_apache_page:/var/www/html
+
+  upstream-almalinux:
+    image: upstream-almalinux
+    build:
+       context: almalinux
+    hostname: upstream-almalinux
+    restart: unless-stopped
+    volumes:
+      - ./hello_apache_page:/var/www/html
