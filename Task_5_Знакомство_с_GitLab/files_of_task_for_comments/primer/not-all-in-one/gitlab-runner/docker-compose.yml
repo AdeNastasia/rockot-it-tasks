@@ -1,0 +1,23 @@
+version: '3'
+services:
+#-----------Gitlab Runners-----------
+
+  gitlab-runner:
+    image: 'gitlab/${GITLAB_RUNNER_VERSION}'
+    restart: unless-stopped
+    # network_mode: host # заккоментировали, потому что при разносе в три разных докер-компоуз мы настроим для них единую сеть
+    hostname: gitlab-runner
+    # debugging on localhost
+    # extra_hosts: # закомментировали, потому что сейчас будем использовать сеть docker compose (ci-cd-network), 
+    # поэтому все контейнеры будут в одной сети и смогут обращаться друг к другу просто по именам сервисов
+    #  example.local: 172.20.10.4 
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - '${GITLAB_RUNNER_CONF_DIR}:/etc/gitlab-runner'
+      #- '${GITLAB_RUNNER_DATA_DIR}:/home/gitlab-runner'
+
+# Подключаем к сети для наших сервисов
+networks:
+  default:
+    external:
+      name: ci-cd-network
