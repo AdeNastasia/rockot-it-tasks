@@ -1,0 +1,87 @@
+---
+# Первый play
+- name: Установка и конфигурирование Nginx и Apache на группе хостов webservers
+  hosts: webservers
+  become: yes
+
+  tasks:
+    - name: Обновление пакетов на Debian
+      apt:
+        name: "*"
+        state: latest
+      when: ansible_os_family == "Debian"
+
+    - name: Установка Nginx на Debian
+      apt:
+        name: nginx
+        state: present
+      when: ansible_os_family == "Debian"
+
+    - name: Установка Apache на Debian
+      apt:
+        name: apache2
+        state: present
+      when: ansible_os_family == "Debian"
+
+    - name: Обновление пакетов на CentOS
+      yum:
+        name: "*"
+        state: latest
+      when: ansible_os_family == "RedHat"
+
+    - name: Установка Nginx на CentOS
+      yum:
+        name: nginx
+        state: present
+      when: ansible_os_family == "RedHat"
+
+    - name: Установка Apache на CentOS
+      yum:
+        name: httpd
+        state: present
+      when: ansible_os_family == "RedHat"
+
+# Второй play для выполнения ролей
+- name: Выполнение ролей для конфигурации Nginx и Apache
+  hosts: webservers
+  become: yes
+  vars:
+    config_dir: "~/ansible-projects/rockot-it-tasks/task_3/files/configs"
+
+  roles:
+    - configure_nginx
+    - configure_apache
+
+# Третий play
+- name: Включение и добавление в автозагрузку Nginx и Apache на группе хостов webservers
+  hosts: webservers
+  become: yes
+
+  tasks:
+    - name: Включение Nginx и его добавление в автозагрузку на Debian
+      systemd:
+        name: nginx
+        state: started
+        enabled: yes
+      when: ansible_os_family == "Debian"
+
+    - name: Включение Apache и его добавление в автозагрузку на Debian
+      systemd:
+        name: apache2
+        state: started
+        enabled: yes
+      when: ansible_os_family == "Debian"
+
+    - name: Включение Nginx и его добавление в автозагрузку на CentOS
+      systemd:
+        name: nginx
+        state: started
+        enabled: yes
+      when: ansible_os_family == "RedHat"
+
+    - name: Включение Apache и его добавление в автозагрузку на CentOS
+      systemd:
+        name: httpd
+        state: started
+        enabled: yes
+      when: ansible_os_family == "RedHat"

@@ -1,0 +1,40 @@
+---
+- name: Работа на Debian
+  block:
+
+    - name: Создание доп. конфига для Nginx в /etc/nginx/sites-available на Debian на основе шаблона
+      template:
+        src: "{{ config_dir }}/debian_and_centos_load_balancer.conf.j2"
+        dest: /etc/nginx/sites-available/load_balancer.conf
+        owner: root
+        group: root
+        mode: '0644'
+      when: ansible_os_family == "Debian"
+
+    - name: Создание символической ссылки для созданного load_balancer.conf на Debian
+      file:
+        src: /etc/nginx/sites-available/load_balancer.conf
+        dest: /etc/nginx/sites-enabled/load_balancer.conf
+        state: link
+        force: yes
+      when: ansible_os_family == "Debian"
+
+- name: Работа на CentOS
+  block:
+
+    - name: Создание доп. конфига для Nginx в /etc/nginx/conf.d на CentOS на основе шаблона
+      template:
+        src: "{{ config_dir }}/debian_and_centos_load_balancer.conf.j2"
+        dest: /etc/nginx/conf.d/load_balancer.conf
+        owner: root
+        group: root
+        mode: '0644'
+      when: ansible_os_family == "RedHat"
+
+- name: Для Debian и CentOS
+  block:
+
+    - name: Перезапуск nginx для обновления конфигурации - на debian и centos
+      service:
+        name: nginx
+        state: restarted
