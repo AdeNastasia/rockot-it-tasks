@@ -374,6 +374,11 @@ ps aux | grep dhclient
 
 С его отключением повозилась. dhclient постоянно появлялся после рестарта сети. Как я поняла, скорее всего, он был запущен раньше и не завершился. И даже не смотря на попытки его отключить, он мог остаться из-за файла аренды DHCP (lease file).
  
+> P.S. Комменты от Юры:
+> 1) Это, скорее всего, лишняя работа. Перепроверю при повторном прохождении шага.
+> 2) После всех настроек можно отправить сервер в ребут (дважды, по старым тардициям). Если после этого всё корректно работате - настройка закончена.
+ 
+ 
 Как я его отключила:
 * Принудительно останавливаю dhclient:
   ```bash
@@ -432,7 +437,29 @@ sudo
  
 > Тут у меня возник вопрос к 127.0.1.1. Как я поняла, В Debian и его производных используется IP-адрес 127.0.1.1 для привязки локального доменного имени к IP 127.0.1.1. Обычно, если gitlab-runner только локальное имя, это нормально. Однако, если это сервер в сети с другим IP, надо заменить IP-адрес на актуальный 
  
-### 1.4. Настройка времени на серверах с АльмаЛинукс
+
+### 1.4. Настройка статического адреса на windows
+> Этот пункт внесла не сразу. Все работало хорошо, потом не могла подключиться к гитлаб-серверу по SSH - ошибка "connection refused". Крутила, вертела, поняла, что на windows выдался тот же ip. И решила, что чем постоянно менять адрес на виртуалке (который итак уже задан), сделаю статику и на винде.
+
+Открываю Панель управления -> Сеть и Интернет -> Центр управления сетями и общим доступом -> Изменение параметров адаптера (в меню слева).
+Нахожу активный адаптер -> ПКМ -> Свойства:
+![alt text](image-65.png)
+
+Выбираю IP версии 4 -> Свойства
+![alt text](image-66.png)
+
+Заполняю:
+![alt text](image-79.png)
+
+* Открываю повершел и ввожу команду `ipconfig /all`, там нахожу заголовок "Адаптер беспроводной локальной сети Беспроводная сеть:", оттуда узнаю, как заполнить **маску подсети**, **основной шлюз** и **DNS-серверы**
+* Чтобы узнать, какой мне доступен диапазон адресов, смотрю на маску подсети, т.к она определяет диапазон ip адресов входящих в подсеть. Если раньше я брала выданный адрес и просто его делала статическим, то сейчас надо сменить адрес на другой. Моя маска - **255.255.255.240**, поискала, как с этим работать. В поисках нашла прикольный калькулятор, на котором можно себя проверить: https://infocisco.ru/ip_calculator.php. 
+* В общем из 14 доступных адресов (чуть меньше, т.к. уже 3 под ВМ отдала, выбрала свободный)
+* Перезапускаю сетевой адаптер и делаю `ipconfig /all` в повершелл, чтобы убедиться, что все ок
+* Да, потом для выхода "в свет" скидываю на автоматическую выдачу ip
+
+
+### 1.5. Настройка времени на серверах с АльмаЛинукс
+ 
 Раньше сталкивалась с этим на центос, сейчас на альме: после установки время в системе некорректное, хотя я указываю часовой пояс.
  
 Проверим время в системе:
@@ -553,12 +580,15 @@ sudo systemctl restart dnsmasq
 ## 2.1.3. Настройка DNS-клиента
 > Указываю dnsmasq как основной DNS-сервер
 
-На всех(!!!) серверах открываю файл `/etc/resolv.conf`, который используется для настройки параметров DNS:
+ 
+На всех(!!!) серверах (в т.ч. на wsl) открываю файл `/etc/resolv.conf`, который используется для настройки параметров DNS:
+ 
 ```bash
 sudo nano /etc/resolv.conf
 ```
-
-Комментирую текущие строки (они созданы системными службами, пусть останутся на случай, если потом понадобиться вернуться к прежним настрйокам) и добавляю:
+ 
+Комментирую текущие строки (они созданы системными службами, пусть останутся на случай, если потом понадобится вернуться к прежним настройкам) и добавляю:
+ 
 ```bash
 # Settings for dnsmasq
 
@@ -573,13 +603,18 @@ nameserver 8.8.8.8
 nameserver 8.8.4.4       
 ```
 
-Блокирую файл от перезаписи.
-На всех серверах выполняю команду ниже, это нужно, потому что некоторые сетевые менеджеры (NetworkManager, systemd-resolved) могут перезаписывать `/etc/resolv.conf `при перезагрузке. 
-```bash
-sudo chattr +i /etc/resolv.conf
-```
-P.S. Если надо будет потом вернуть возможность изменений, выполняем `sudo chattr -i /etc/resolv.conf`
-
+ 
+~~Блокирую файл от перезаписи. На всех серверах выполняю команду ниже, это нужно, потому что некоторые сетевые менеджеры (NetworkManager, systemd-resolved) могут перезаписывать `/etc/resolv.conf `при перезагрузке.~~
+~~`sudo chattr +i /etc/resolv.conf`~~
+~~P.S. Если надо будет потом вернуть возможность изменений, выполняем `sudo chattr -i /etc/resolv.conf`~~
+ 
+> Коммент от Юры:
+> Костыль. Если твои настройки кто-то переписывает (приложение X), то корректно менять параметры в этом приложение, а не запрещать ему запись. 
+> В части файлов конфигураций это явно указано.
+>  
+> Проверю при повторном прохождении шага, будет ли перезапись.
+  
+ 
 ## 2.1.4. Проверка работы
 Дальше на всех трех серверах делаю проверку с помощью следующих двух команд.
 
@@ -616,8 +651,9 @@ dig gitlab-server.lan
 
 
 ## Этап 3. Настроить все вручную
-### Настройка gitlab-server
-#### Установка докер:
+### 3.1. Настройка gitlab-server
+#### 3.1.1. Установка докер:
+ 
 ```bash
 sudo dnf -y install dnf-plugins-core
 sudo dnf config-manager --add-repo https://download.docker.com/linux/centos/docker-ce.repo
@@ -629,7 +665,9 @@ sudo docker run hello-world
 Все ок:
 ![alt text](image-41.png)
  
-#### Установка MTA
+
+#### 3.1.2. Установка MTA
+ 
 MTA (Mail Transfer Agent) — это программное обеспечение, которое занимается отправкой, пересылкой и получением электронной почты через Интернет. Это основной компонент системы передачи электронной почты.
 
 В оф. инструкции пишут, что нужен MTA (Postfix), т.к. GitLab нужно уметь отправлять почтовые уведомления. Локально можно без него, но по идее в продакшене MTA обязателен.
@@ -661,8 +699,9 @@ mydestination = gitlab-server.lan, localhost.localdomain, localhost
 sudo systemctl enable postfix
 sudo systemctl start postfix
 ```
+  
+#### 3.1.3. Проверка Postfix (тестовое письмо)
  
-#### Проверка Postfix (тестовое письмо)
 Тестирую работу Postfix с помощью отправки письма.
 ```bash
 echo "Тестовое письмо от Postfix" | sendmail -v kaya@localhost
@@ -692,7 +731,8 @@ mail
 q
 ``` 
  
-#### Установка gitlab server в докер контейнере
+#### 3.1.4. Установка gitlab server в докер контейнере
+ 
 > Памятка:
 > В оф. инструкции предлагают настроить порт 22 для SSH, если GitLab устанавливается на сервер напрямую.
 > В моём случае это не требуется, так как GitLab запускается в Docker-контейнере.
@@ -826,7 +866,8 @@ sudo docker compose up -d
 > А вот если бы контейнеры запускались на одной машине и должны были общаться между собой  внутри Docker — тогда нужно было бы использовать блок `networks:` в `docker-compose.yml`.
 > Ну а пока иду дальше.
  
-#### Проверка GitLab-сервера
+#### 3.1.5. Проверка GitLab-сервера
+ 
 Проверяю статус контейнера:
 ```bash
 sudo docker ps
@@ -849,7 +890,9 @@ http://gitlab-server.lan
 Сперва, конечно, ничего не открывается:
 ![alt text](image-48.png)
 Неудивительно.
-##### Настройка файла hosts для разрешения имен на хосте с Windows
+ 
+##### 3.1.5.1. Настройка файла hosts для разрешения имен на хосте с Windows
+ 
 На ноуте не стала настраивать DNS, чтобы не менять системные параметры.  
 Вместо этого добавляю имена вручную в файл `hosts`.
 1. Пуск → Поиск → Блокнот → ПКМ → Запуск от имени администратора
@@ -895,8 +938,11 @@ sudo cat /srv/gitlab/config/initial_root_password
 Переходим к серверу с gitlab-runner
 
 
-### gitlab-runner
-#### Установка докер:
+ 
+=======
+### 3.2. Настройка gitlab-runner
+#### 3.2.1. Установка докер
+ 
 ```bash
 # Add Docker's official GPG key:
 sudo apt-get update
@@ -925,7 +971,8 @@ sudo docker run hello-world
 ![alt text](image-56.png)
 
  
-#### Разворачиваем GitLab Runner в Docker 
+#### 3.2.2. Разворачиваем GitLab Runner в Docker 
+ 
 Создаю volume для хранения данных раннера (по желанию, но желательно):
 ![alt text](image-57.png)
 > Я так поняла, на наш выбор: локальный вольюм или докер вольюм. Но вроде как докер вольюм предпочтительнее: управляется докером, изолированный, и всегда можно получить доступ к файлам с помощью команды `docker volume inspect gitlab-runner-config`.
@@ -941,6 +988,7 @@ sudo docker volume create gitlab-runner-config
 sudo docker run -d --name gitlab-runner --restart always \
   -v /var/run/docker.sock:/var/run/docker.sock \
   -v gitlab-runner-config:/etc/gitlab-runner \
+  --add-host gitlab-server.lan:172.20.10.5 \
   gitlab/gitlab-runner:latest
 ```
 > Разбор:
@@ -950,409 +998,289 @@ sudo docker run -d --name gitlab-runner --restart always \
   >  - создавать новые контейнеры (`image: ...`)
   > - запускать `docker build`, `docker run`, `docker push` и т.д.
 > * `-v gitlab-runner-config` - сохраняет конфиг раннера
+> * `--add-host gitlab-server.lan:172.20.10.5`  - как я поняла, необязательно, но желательно. эта строчка добавляет запись в `/etc/hosts` внутри контейнера раннера и нужна, чтобы раннер мог зарегистрироваться в гитлабе по его урлу вне заивисимости от работы днс
 > * `gitlab/gitlab-runner:latest` - оф. образ раннера
 
 Теперь раннер как сервис готов работать, но ещё не знает, с каким гитлаб-сервером. Поэтому пора его зарегать. 
 
 Регистрирую раннер.
-URL GitLab (в твоём случае: http://gitlab-server.lan)
-
-Token проекта или группы (его можно взять в GitLab → Project → Settings → CI/CD → Runners)
-####
-####
-
-
-
-
-
-
-____________
+ 
+> Выбираю **Instance Runner**, чтобы он был доступен для всех проектов в GitLab и не был привязан к какому-то конкретному репозиторию.
+ 
+1. Перехожу в интерфейс гитлаба: http://gitlab-server.lan/admin/runners
+2. Жму `New Instance Runner`
+Захожу в проект → Settings → CI/CD → Runners 
+Заполняю:
+![alt text](image-58.png) 
+Затем
 ```bash
-sudo dnf -y install dnf-plugins-core
-sudo dnf config-manager --add-repo https://download.docker.com/linux/centos/docker-ce.repo
-sudo dnf install docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin -y
-sudo systemctl enable --now docker
-sudo docker run hello-world
+sudo docker exec -it gitlab-runner gitlab-runner register \
+  --non-interactive \
+  --url "http://gitlab-server.lan" \
+  --registration-token "glrt-t1_VWnV13e3YxKokyKY9N4K" \
+  --executor "docker" \
+  --description "docker-runner" \
+  --tag-list "docker" \
+  --run-untagged="true" \
+  --locked="false" \
+  --docker-image "alpine:latest"
 ```
+ 
+> Снова пояснения, пусть будут:
+> * `--url` - урл гитлаб-сервера, к которому подключается раннер
+> * `--registration-token` - токен для аутентификации при подключении к гитлаб-серверу
+> * `--description` - описание раннера
+> * `--tag-list` - теги раннера
+> * `--locked` - определяет, будет ли раннер заблокирован для использования только одним проектом (false — доступен всем проектам). не обязателен для регистрации инстанс раннера, т.к. по умолчанию раннеры не заблокированы и доступны для всех проектов. но, наверное, может быть удобным при большом количестве раннеров, чтобы в конфиге было проще идентифицировать раннеры
+> * `--run-untagged` - если включено, раннер может выполнять задания без тегов
+> * `--executor` - определяет тип окружения для выполнения задач (shell, docker)
 
+Готово:
+![alt text](image-59.png)
 
-
-
-
-#### На сервера с дебиан:
-Настройте aptрепозиторий Docker.
-
-
-# Add Docker's official GPG key:
-sudo apt-get update
-sudo apt-get install ca-certificates curl
-sudo install -m 0755 -d /etc/apt/keyrings
-sudo curl -fsSL https://download.docker.com/linux/debian/gpg -o /etc/apt/keyrings/docker.asc
-sudo chmod a+r /etc/apt/keyrings/docker.asc
-
-# Add the repository to Apt sources:
-echo \
-  "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/debian \
-  $(. /etc/os-release && echo "$VERSION_CODENAME") stable" | \
-  sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
-sudo apt-get update
-
-sudo apt-get install docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
-
-sudo docker run hello-world
-
-
-## Этап 4. Упростить развертывание
-Как я поняла, дальше мне нужно упростить процесс развертывания, чтобы не настраивать всё вручную при каждом развертывании (раньше этот этап был третьим)))
-
-### 3.1. Дружу WSL и dnsmasq
-Во-первых, здесь тоже нужно заявить о dnsmasq. Поэтому на WSL также открываю файл `/etc/resolv.conf` для настройки параметров DNS:
+Т.к. я создала раннер с `--executor "docker"`, так что для каждой CI job запускается отдельный докер-контейнер. У таких контейнеров своя сеть по умочанию, и чтобы команды могли обращаться к гитлаб-серверу по имени, то нужно прописать резолвинг в конфиге раннера. Поэтому сразу после регистрации раннера открываю его конфиг и добавляю `extra hosts`.  
+ 
+Смотрю, где именно лежит конфиг:
 ```bash
-sudo nano /etc/resolv.conf
+docker volume inspect gitlab-runner-config
 ```
-
-Комментирую прежние настройки и добавляю новые:
+ 
+Открываю его:
 ```bash
-# Settings for dnsmasq
-
-# Добавляет суффикс .lan при поиске хостов без полного доменного имени
-search lan            
-
-# Локальный днс - адрес сервера с dnsmasq
-nameserver 172.20.10.3   
-
-# Google DNS на случай отказа локального и дополнительный резервный DNS
-nameserver 8.8.8.8       
-nameserver 8.8.4.4   
+sudo nano /var/lib/docker/volumes/gitlab-runner-config/_data/config.toml
 ```
-И перезагружаюсь
+ 
+После `[runners.docker]` добавляю строку:
 ```bash
-exit
-wsl --shutdown
-wsl
+extra_hosts = ["gitlab-server.lan:172.20.10.5"]
 ```
-![alt text](image-34.png)
-
-### 3.2. Установка Ansible на WSL (Ubuntu)
-Открываю WSL и обновляю пакеты:
+ 
+Сохраняю файл и перезапускаю контейнер с раннером:
 ```bash
-sudo apt update && sudo apt upgrade -y
+docker restart gitlab-runner
 ```
+ 
+В интерфейсе гитлаба нас поздравляют:
+![alt text](image-60.png)
 
-Устанавливаю Ansible:
-```bash
-sudo apt install ansible -y
-```
+В списке раннеров наш готов:
+![alt text](image-61.png)
+ 
+И в самом проекте проверяю, что в настройках разрешены инстанс раннеры:
+`Project → Settings → CI/CD → блок Runners → Стоит галочка Enable shared runners`
+ 
+#### 3.2.3. Проверка работы GitLab Runner через .gitlab-ci.yml
+##### 3.2.3.1. Настройка SSH-доступа к GitLab
+Настраиваю SSH-соединение, чтобы работать с репозиториями без пароля.  
 
-Проверяю, что Ansible установлен и работает:
-```bash
-ansible --version
-```
-
-
-### 3.2. Настройка на серверах SSH-доступа без пароля
-> На серверах настроим вход по SSH без пароля, чтобы было удобнее и безопаснее + дальше буду использовать ансибл, чтобы при масштабировании не было такого, что Ansible входит по SSH на кучу серверов по паролю, и мы вручную каждый раз вводим пароль.
-> Для этого на клиенте (в моем случае - WSL) должна быть пара ключей (приватный + публичный) и публичный добавляю на сервера, к которым буду подключаться.
-
-Проверяю, что на серверах установлен OpenSSH Server (ну выше я ставила, но это так, для общей инструкции больше)
-```bash
-sudo systemctl status sshd
-```
-
-Проверяю, есть ли ключи на WSL:
+На сервере с WSL (хост) проверяю наличие ssh-ключей
 ```bash
 ls ~/.ssh
 ```
-
-У меня ключи есть (если бы не было, надо создать с помощью команды `ssh-keygen -t rsa -b 4096 -C "коммент, напр. почта"`)
-![alt text](image.png)
-
-Копирую публичный ключ на серверы. На каждой машине, к которой мы будем подключаться по SSH без пароля, надо разместить публичный ключ в `~/.ssh/authorized_keys`.
-Можно вручную скопировать и вставить, можно на WSL с помощью команд:
-```bash
-ssh-copy-id kaya@gitlab-server
-ssh-copy-id kaya@gitlab-runner
-ssh-copy-id kaya@docker-registry
-```
-
-### 3.3. Настройка Ansible
-Создаю каталог:
-```bash
-mkdir ~/ansible && cd ~/ansible
-```
-
-В инвентаре указываю три группы серверов:
-```bash
-nano ~/ansible/inventory.ini
-```
-
-Вставляю:
-```bash
-[gitlab_servers]
-gitlab-server ansible_user=kaya
-
-[gitlab_runners]
-gitlab-runner ansible_user=kaya
-
-[docker_registries] 
-docker-registry ansible_user=kaya
-
-[all:vars]
-ansible_ssh_private_key_file=~/.ssh/id_rsa
-```
-
-> Я прописала три сервера и единую переменную для всех хостов,
-> чтобы для всех серверов будет использовался приватный ключ `~/.ssh/id_rsa` для аутентификации по SSH.
-
-
-> Проверяю, что Ansible может подключиться к серверам:
-```bash
-ansible all -i inventory.ini -m ping
-```
-> * ansible all - выполняет команду для всех хостов, указанных в инвентаре
-> * -i inventory.ini - указываем, какой инвентарь используем для проверки 
-> * -m ping - это модуль ансибл, который проверяет подключение через SSH
-
-Вывод:
-![alt text](image-35.png)
-
  
- Все ок.
-
-### 3.4. Пишем роли 
-Итак, чтобы не писать портянку в плейбуке, пишу роли для установки всех сервисов (гитлаб сервер, раннер и докер регистри), а потом вызову роли.
-
-Создаю структуру ролей:
+Есть:
+![alt text](image-62.png)
+ 
+Вывожу и копирую публичный ключ
 ```bash
-cd ~/ansible
-ansible-galaxy init roles/gitlab_server_alma
-ansible-galaxy init roles/gitlab_runner_alma
-ansible-galaxy init roles/docker_registry_deb
-```
-
-> Для памятки: после команд у нас создались соответствующие директории с единой структурой.
->  
-> На примере:  
-> ![alt text](image-37.png)
-
-
-Дальше наполняю роли
-
-### 3.4.1. Роль для установки гитлаб-сервера
-```bash
-nano ~/ansible/roles/gitlab_server_alma/tasks/main.yml
+cat ~/.ssh/id_rsa.pub
 ```
  
-После
-```yml---
-# tasks file for roles/gitlab_server_alma
+Добавляю ключ в GitLab
+Перехожу в http://gitlab-server.lan/-/user_settings/ssh_keys →
+ 
+Создаю ключ:
+![alt text](image-63.png)
+ 
+Проверяю подключение с wsl:
+```bash
+ ssh -T -p 2222 git@gitlab-server.lan
 ```
-
-Вставляю
-```yml
-- name: Обновление кеша репозиториев
-  yum:
-    update_cache: yes
-  when: ansible_os_family == "RedHat"
-
-- name: Установка зависимостей
-  yum:
-    name:
-      - curl
-      - policycoreutils-python-utils
-      - openssh-server
-      - postfix
-      - firewalld
-    state: present
-  when: ansible_os_family == "RedHat"
-
-- name: Запуск и включение Postfix
-  systemd:
-    name: postfix
-    state: started
-    enabled: true
-  when: ansible_os_family == "RedHat"
-
-- name: Добавление репозитория GitLab
-  get_url:
-    url: https://packages.gitlab.com/install/repositories/gitlab/gitlab-ee/script.rpm.sh
-    dest: /tmp/gitlab_install.sh
-    mode: '0755'
-  when: ansible_os_family == "RedHat"
-
-- name: Установка репозитория GitLab
-  command: /tmp/gitlab_install.sh
-  args:
-    creates: /etc/yum.repos.d/gitlab_gitlab-ee.repo
-  when: ansible_os_family == "RedHat"
-
-- name: Установка GitLab
-  yum:
-    name: "gitlab-ee-{{ gitlab_version }}"
-    state: present
-  when: ansible_os_family == "RedHat"
-
-- name: Открытие портов 80 и 443 в firewall
-  firewalld:
-    service: "{{ item }}"
-    permanent: true
-    state: enabled
-  loop:
-    - http
-    - https
-  when: ansible_os_family == "RedHat"
-
-- name: Перезапуск firewalld
-  systemd:
-    name: firewalld
-    state: restarted
-    enabled: true
-  when: ansible_os_family == "RedHat"
-
-- name: Запуск и включение GitLab
-  systemd:
-    name: gitlab-runsvdir
-    state: started
-    enabled: true
-  when: ansible_os_family == "RedHat"
-
-- name: Конфигурирование GitLab
-  command: gitlab-ctl reconfigure
-  args:
-    creates: /var/opt/gitlab/bootstrapped
-  when: ansible_os_family == "RedHat"
+> * -p 2222 - потому что ранее пробрасывали его вместо 22
+ 
+Как обычно, если не просят пароль, значит все хорошо:
+![alt text](image-64.png)
+  
+##### 3.2.3.2. Создаю и отправляю в проект тестовый пайплайн
+Клонирую проект по SSH
+```bash
+cd /home/kaya/repos/from_local_gitlab
+git clone git@gitlab-server.lan:root/project-1-test-ci-cd.git
 ```
  
-Определяем переменные для роли:
+Проверяю, что у меня нужные настройки гита:
 ```bash
-nano ~/ansible/roles/gitlab_server_alma/vars/main.yml
-```
- 
-Так как версия гитлаба нужна на 1 меньше актуальной, после:
-```yml
----
-# vars file for roles/gitlab_server_alma
-```
- 
-Вставляю:
-```yml
-gitlab_version: "17.8.4"
-```
-
-### 3.4.2. Роль для установки гитлаб-раннера
-Для раннера предварительно узнала версию дебиан
-```bash
-lsb_release -a
-```
-![alt text](image-38.png)
-
-Открываю:
-```bash
-nano ~/ansible/roles/gitlab_runner_alma/tasks/main.yml
-```
-
-После
-```yml---
-# tasks file for roles/gitlab_runner_alma
-```
-Вставляю:
-```yml
-- name: Обновление кеша репозиториев
-  ansible.builtin.apt:
-    update_cache: yes
-  when: ansible_os_family == "Debian"
-
-- name: Download GitLab Runner installation script
-  ansible.builtin.get_url:
-    url: "https://packages.gitlab.com/install/repositories/runner/gitlab-runner/script.deb.sh"    
-    dest: "/tmp/script.deb.sh"
-    mode: '0755'
-
-- name: Run GitLab Runner installation script
-  ansible.builtin.command:
-    cmd: "bash /tmp/script.deb.sh"
-  args:
-    creates: "/etc/apt/sources.list.d/gitlab_runner_gitlab-runner.list"
-
-- name: Install GitLab Runner
-  ansible.builtin.apt:
-    name: gitlab-runner
-    state: present
-    update_cache: yes
-```
-
-![alt text](image-39.png)
- 
-### 3.4.3. Роль для установки докер регистри
-Открываю:
-```bash
-nano ~/ansible/roles/docker_registry_deb/tasks/main.yml
-```
-После
-```yml---
-# tasks file for roles/docker_registry_deb
-```
-Вставляю:
-```yml
-- name: Установка Docker
-  ansible.builtin.yum:
-    name: docker
-    state: present
-  when: ansible_os_family == "RedHat"
-
-- name: Запуск и включение Docker
-  ansible.builtin.service:
-    name: docker
-    state: started
-    enabled: true
-  when: ansible_os_family == "RedHat"
-
-- name: Запуск Docker Registry с помощью Ansible-модуля
-  community.docker.docker_container:
-    name: registry
-    image: registry:2
-    state: started
-    restart_policy: always
-    published_ports:
-      - "5000:5000"
-  when: ansible_os_family == "RedHat"
-```
-
-### 3.5. Пишу плейбук
-Создаю плейбук:
-```bash
-nano ~/ansible/playbook.yml
-```
-
-Вставляю:
-```yml
----
-- name: Deploy GitLab Server
-  hosts: gitlab_servers
-  become: yes
-  roles:
-    - gitlab_server_alma
-
-- name: Deploy GitLab Runner
-  hosts: gitlab_runners
-  become: yes
-  roles:
-    - gitlab_runner_alma/
-
-- name: Deploy Docker Registry
-  hosts: docker_registries
-  become: yes
-  roles:
-    - docker_registry_deb
-```
-
-Запускаю плейбук:
-```bash
-ansible-playbook -i inventory.ini playbook.yml --ask-become-pass -v
+git config --list
 ```
   
+Создаю тестовый ci-cd:
+```bash
+cd test-project-0/
+```
+  
+```bash
+nano .gitlab-ci.yml
+```
+ 
+Вставляю (обязательно с тегом докер, т.к. раннер создавала с тегом):
+```bash
+stages:
+  - test
 
+echo_ok_job:
+  stage: test
+  tags:
+    - docker
+  script:
+    - echo "ok"
+```
+ 
+Проверяю название ветки, сохраняю и делаю пуш:
+```bash
+git branch
+git add .
+git commit -m "add test .gitlab-ci.yml"
+git push -u origin main
+```
+ 
+Проверяю в UI гитлаба, что все в порядке:
+Project → Build → Pipelines:
+![alt text](image-70.png)
+### 3.3. Настройка docker-registry
+Теперь остается развернуть и подключить локальный приватный докер-реестр, чтобы хранить образы, собранные в пайплайнах, и использовать его в своих CI/CD.
+#### 3.3.1. Установка докер:
+```bash
+sudo dnf -y install dnf-plugins-core
 
+sudo dnf config-manager --add-repo https://download.docker.com/linux/centos/docker-ce.repo
 
+sudo dnf install docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin -y
 
+sudo systemctl enable --now docker
 
+sudo docker run hello-world
+```
+
+Все ок:
+![alt text](image-71.png)
+ 
+#### 3.3.2 Запуск контейнера регистри
+Запускаю командой 
+```bash
+sudo docker run -d --name registry \
+  --restart always \
+  -p 5000:5000 \
+  -v /srv/registry/data:/var/lib/registry \
+  registry:2
+```
+аргументы:
+> * --name registry	- даем контейнеру понятное имя вместо случайного 
+> * --restart always - автоматический перезапуск
+> * -p 5000:5000 - пробрасываем порт, т.к. регистри слушает на порту 5000
+> * -v /srv/registry/data:/var/lib/registry	- монтируем директории, чтобы при рестарте контейнера не потерять данные 
+> * registry:2 - нужный образ (он прописан в https://hub.docker.com/_/registry)
+ 
+С другой машины, например, с гитлаб-раннером, проверяю, что к регистри есть доступ:
+```bash
+curl http://docker-registry.lan:5000/v2/
+```
+
+Вижу пустой ответ, все работает:
+![alt text](image-72.png)
+ 
+И тестово пуляю образ, тоже с любой из машин в сети, с того же гитлаб-раннера:
+```bash
+sudo docker pull alpine
+
+sudo docker tag alpine docker-registry.lan:5000/alpine
+
+sudo docker push docker-registry.lan:5000/alpine
+```
+ 
+Пуш не прошел, так как докер пытался обратиться по https, а регистри работает по http:
+![alt text](image-73.png)
+
+Разрешаю докеру использовать HTTP:
+В файл:
+```bash
+sudo nano /etc/docker/daemon.json
+```
+ 
+Добавляю: 
+```bash
+{
+  "insecure-registries": ["docker-registry.lan:5000"]
+}
+```
+ 
+Перезапускаю докер:
+```bash
+sudo systemctl restart docker
+```
+ 
+Пробую еще раз пушнуть: 
+```bash
+sudo docker push docker-registry.lan:5000/alpine
+```
+ 
+Все ок:
+![alt text](image-74.png)
+ 
+Проверяю:
+```bash
+curl http://docker-registry.lan:5000/v2/_catalog
+```
+ 
+Образ подгрузился, все работает:
+![alt text](image-75.png)
+ 
+## Этап 4. Автоматизация
+Штош, после ручной настройки и проверки того, что все ок (а не до нее...) можно приступать к автоматизации. Я считаю так: все, что можно установить, настроить и проверить, - автоматизируем с помощью ансибл. 
+
+### 4.1. Думаю
+Пока я писала все пошагово, пришла к такому выводу:
+Все, что относится к базовой установке и настройке ОС, лучше автоматизировать в специальных инструментах, по типу Vagrant, PXE. 
+ 
+И после базовой инициализации сервера уже стоит переходить к работе с ансибл
+
+**1. Установка ОС и разметка дисков** - не автоматизирую
+Причина:
+Как я поняла, это можно автоматизировать через специальные инструменты, например, PXE или MAAS, и это делается там, где нужно развернуть очень много машин. Сейчас я потрачу больше времени на автоматизацию, которая не будет востребована
+ 
+**2. Проверка SSH после установки** - не автоматизирую
+Причина: 
+В целом, он почти всегда есть после установки ОС, и раз установку не автоматизириуем, тут будто тоже можно 
+ 
+**3. Настройка статического IP** - не автоматизирую
+Причина: 
+Ансибл сам подключается по SSH. В целом, в данном задании я брала ip-адрес машины и его же делала статическим. Это спокойно можно сделать и по SSH. А вот если есть задача сменить ip на другой, то тут у нас связь оборвется после применения настроек. И как будто, во время настройки, если подключение слетит, то будет больше мороки (но мб и ошибаюсь), и это проще отнести к этапу базовой настройки ОС
+ 
+**4. Создание пользователя** - не автоматизирую
+Причина:
+Как будто, можно и автоматизировать. Но я хочу подключаться с ансибла уже с нужного пользователя. К тому же, на Альме пользователя можно создать прямо в момент установки, а роль только для создания пользователя на Дебиан сейчас избыточна.
+ 
+**5. Настройка hostname** - не автоматизирую
+Причина:
+Отношу это к этапу базовой настройки сервера, которую либо руками, либо через подходящий инструмент. А через ансибл будто избыточно
+ 
+**6. Проверка /etc/hosts и добавление туда записей** - не автоматизирую
+Причина:
+Отношу это к этапу базовой настройки сервера, которую либо руками, либо через подходящий инструмент. А через ансибл будто избыточно
+ 
+**7. Настройка времени** - автоматизирую
+Причина:
+Оно почему-то постоянно слетает, и из-за этого все установки падают с ошибкой.
+ 
+**8. Настройка DNS-сервера (dnsmasq)** - не автоматизирую
+Причина:
+Отношу это к этапу базовой настройки сервера, которую либо руками, либо через подходящий инструмент. А через ансибл будто избыточно
+ 
+**9. Установка ПО** - автоматизирую
+Причина:
+Ну если и это не автоматизировать, то...
+ 
+Вкратце, на этому этапе хочу так:
+- установка ансибл
+- настройка и проверка связи к серверам
+- создаю шаблон проекта: структуру ролей, плейбук - то есть сразу прикидываю, как лучше все распределить
+- создаю роль и сразу тестирую ее = запускаю плейбук, ловлю и правлю ошибки. т.к. ансибл пропускает задачи, если они уже выполнены, то лишнего ничего не должно быть
