@@ -1421,5 +1421,5 @@ ansible all -i inventory.ini -m ping
  
 Все выглядит здраво:
  
-![alt text](image-86.png)
+![alt text](image-80.png)
  
