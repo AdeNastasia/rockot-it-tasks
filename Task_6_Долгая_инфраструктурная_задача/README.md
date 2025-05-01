@@ -1409,10 +1409,21 @@ python3 --version
 nano ~/ansible/inventory.ini
 ```
  
-Прописываю явно `ansible_python_interpreter`, т.к. теперь на серверах с альмалинукс два питона (системный и пользовательский) - чтобы не было путаницы:
+Прописываю явно `ansible_python_interpreter` для серверов на альме, т.к. теперь на серверах с альмалинукс два питона (системный и пользовательский) - чтобы не было путаницы:
 ```bash
-ansible_python_interpreter=/usr/bin/python3
+[gitlab_servers]
+gitlab-server ansible_user=kaya ansible_python_interpreter=/usr/bin/python3
+
+[gitlab_runners]
+gitlab-runner ansible_user=kaya
+
+[docker_registries] 
+docker-registry ansible_user=kaya ansible_python_interpreter=/usr/bin/python3
+
+[all:vars]
+ansible_ssh_private_key_file=/home/kaya/.ssh/id_rsa
 ```
+> Глобально путь к питоне не задаю, чтобы ансибл не сломался на серверах с другой ОС 
  
 И снова пингую:
 ```bash
@@ -1422,4 +1433,201 @@ ansible all -i inventory.ini -m ping
 Все выглядит здраво:
  
 ![alt text](image-80.png)
+
+### 4.2.4. Создаю структуру ролей
+ 
+Создаю структуру ролей:
+```bash
+cd ~/ansible
+ansible-galaxy init roles/common
+ansible-galaxy init roles/docker
+ansible-galaxy init roles/gitlab_server
+ansible-galaxy init roles/gitlab_runner
+ansible-galaxy init roles/docker_registry
+ansible-galaxy init roles/postfix
+```
+> Роль common создала не сразу. Опять слетело время. Так как это иногда случается, то пусть будет отдельная роль на такие случаи, ну и мб потом пригодятся настройки какие.
+ 
+> Для памятки: после команд у нас создались соответствующие директории с единой структурой. Посмотреть можно с помощью `tree roles`:
+>  ![alt text](image-80.png)
+
+Пока роли пустые, буду наполнять по одной: наполнила, протестировала, пошла дальше. Чтобы потом не было всего в куче. 
+ 
+### 4.2.5. Создаю плейбук 
+
+Создаю плей:
+```bash
+nano playbook.yml
+```
+ 
+Наполняю
+```yml
+---
+- name: Базовая настройка серверов (время, в будущем, может, что-то еще)
+  hosts: all
+  become: true
+  roles:
+    - common
+  tags: common
+
+- name: Установка докера на все серверы
+  hosts: all
+  become: true
+  roles:
+    - docker
+  tags: docker
+
+- name: Поднимаем гитлаб-сервер в докер-контейнере - установка MTA (postfix) + сам гитлаб-сервер 
+  hosts: gitlab-server
+  become: true
+  roles:
+    - role: postfix
+      tags: postfix
+    - role: gitlab_server
+      tags: gitlab_server
+
+- name: Поднимаем гитлаб-раннер в докер-контейнере
+  hosts: gitlab-runner
+  become: true
+  roles:
+    - gitlab_runner
+  tags: gitlab_runner
+
+- name: Поднимаем докер-регистри в докер-контейнере
+  hosts: docker-registry
+  become: true
+  roles:
+    - docker_registry
+  tags: docker_registry
+```
+ 
+> Для каждой роли прописала тег, чтобы можно было запускать каждую роль по отдельности для отладки. Можно было бы прописать несколько тегов в квадратных скобках, но пока не придумала уместную для задачи ситуацию.
+> 
+> Кстати, я попутно узнала, что для ролей все пишут вместо пробелов нижнее подчеркивание, а для имен серверов в инвентори пишут дефис.
+
+### 4.2.6. Роль common
+#### 4.2.6.1. Создаю роль для базовой настройки системы
+ 
+```bash
+nano ~/ansible/roles/common/tasks/main.yml
+```
+ 
+После
+```yml
+---
+# tasks file for roles/common
+```
+
+Вставляю
+```yml
+# Настройка времени для ОС на базе RedHat
+- name: Настройка времени для ОС на базе RedHat
+  when: ansible_os_family == "RedHat"
+  block:
+    - name: Проверка наличия chrony
+      yum:
+        name: chrony
+        state: present
+        update_cache: yes
+
+    - name: Настройка NTP-серверов в конфиге /etc/chrony.conf
+      blockinfile:
+        path: /etc/chrony.conf
+        marker: "# {mark} ANSIBLE MANAGED NTP BLOCK"
+        block: |
+          server 0.pool.ntp.org iburst
+          server 1.pool.ntp.org iburst
+          server 2.pool.ntp.org iburst
+          server 3.pool.ntp.org iburst
+
+    - name: Перезапуск chronyd после изменения конфигурации
+      service:
+        name: chronyd
+        enabled: true
+        state: restarted
+
+    - name: Принудительная синхронизация времени
+      command: chronyc -a makestep
+      register: chronyc_result
+      changed_when: "'step' in chronyc_result.stdout"
+
+    - name: Ждём, пока chronyd догонит (максимум 5 попыток)
+      command: chronyc tracking
+      register: chrony_tracking_status
+      changed_when: false
+      until: chrony_tracking_status.stdout is search('Leap status\s*:\s*Normal')
+      retries: 5
+      delay: 5
+
+    - name: Дебаг - вывод ошибки, если время не синхронизировано (Leap status)
+      fail:
+        msg: "Время не синхронизировано: в выводе chronyc tracking — Leap status: НЕ Normal"
+      when: chrony_tracking_status.stdout is not search('Leap status\s*:\s*Normal')
+
+    - name: Дебаг - вывод сообщения, что все ок, если время синхронизировано (Leap status)
+      debug:
+        msg: "Время синхронизировано: в выводе chronyc tracking — Leap status: Normal"
+      when: chrony_tracking_status.stdout is search('Leap status\s*:\s*Normal')
+
+# Настройка времени для ОС на базе Debian
+- name: Настройка времени для ОС на базе Debian
+  when: ansible_os_family == "Debian"
+  block:
+    - name: Отключаем синхронизацию времени
+      command: timedatectl set-ntp false
+
+    - name: Ждём 1 секунду
+      pause:
+        seconds: 1
+
+    - name: Включаем синхронизацию времени
+      command: timedatectl set-ntp true
+
+    - name: Проверка, есть ли синхронизация времени (NTPSynchronized)
+      command: timedatectl show -p NTPSynchronized --value
+      register: ntp_synchronized_status
+      changed_when: false
+
+    - name: Дебаг - вывод ошибки, если время не синхронизировано (NTPSynchronized)
+      fail:
+        msg: "timedatectl: Время НЕ синхронизировано — NTPSynchronized: no"
+      when:
+        - ntp_synchronized_status.stdout != "yes"
+
+    - name: Дебаг - вывод сообщения, что все ок, если время синхронизировано (NTPSynchronized)
+      debug:
+        msg: "timedatectl: Время синхронизировано — NTPSynchronized: yes"
+      when:
+        - ntp_synchronized_status.stdout == "yes"
+```
+> По порядку про интересности:
+> 1. Узнала про маркеры в blockinfile. Выглядит удобно - при повторном запуске плейбука ансибл не будет дублировать блок в рамках маркера, а еще можно вносить изменения именно в него и удалить, тоже только его. Решила добавить, чтобы захламлять конфиг при повторных прогонах.
+> 
+> 2. Здесь для Альмы использую command, потому что иначе не работает. 
+> Я узнала, что:
+> * По умолчанию chronyd не делает резкую синхронизацию (jump), если время отличается сильно — чтобы не сломать работу системных сервисов, которые чувствительны к скачкам времени. А на моих ВМ расхождение во времени более чем на месяц. 
+> * По умолчанию, если chronyd обнаруживает большое расхождение (обычно больше 3 секунд), он переходит в режим "slew" — медленно «подтягивает» время, добавляя или убавляя доли секунд. Это безопасно, но может занять часы или дни, если расхождение большое (вроде месяца).
+При этом chronyd всё равно считает, что он работает корректно — просто потихоньку выравнивает.
+> 
+> У меня сервер с нуля, так что сейчас резкий скачок времени ничего не сломает. В реальной среде, я пока не понимаю, как поступить. Думаю, что нужно оценить, насколько большое расхождение во времени; насколько критично сменить его прямо сейчас (или можно подождать); если критично - посмотреть, какие сервисы могут полететь и оценить риски
+> 
+> В рамках именно этой задачи я принудительно поставить правильное время сразу. Такая роль-костыль (потому что по идее время надо выравнивать также на этапе настойки ОС, без ансибл).
+> 
+> 3. Еще получается, что `makestep` будет выполняться в любом случае (т.к. это не модуль, а команда). По идее можно сделать проверку "выполнять только в таких-то случаях). Возможно, это будет уместно в проде (если вообще в проде уместно добавлять такую настройку времени через роль). И тогда можно оценить, при каких условиях принудительно синхронизировать время. Но сейчас так не делаю - в моем случае выполнять обязательно надо, иначе дальше ничего не поставится
+> 
+> 4. Для проверки, что все ок до,бавила мини-отладку - падение, если не синхронизировано и сообщения в случае успеха и провала
+> 
+> 5. Изначально роль была для альмалинукс, потом выяснилось, что на дебиан у меня тоже время отлетело, добавила
+
+ 
+#### 4.2.6.2. Тест роли common
+ 
+Запускаю плейбук:
+```bash
+ansible-playbook -i inventory.ini playbook.yml --ask-become-pass -v --tags common
+```
+ 
+Сработало!
+ 
+![alt text](image-87.png)
  
