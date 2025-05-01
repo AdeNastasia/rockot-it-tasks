@@ -1631,3 +1631,166 @@ ansible-playbook -i inventory.ini playbook.yml --ask-become-pass -v --tags commo
  
 ![alt text](image-87.png)
  
+### 4.2.7. Роль для установки докера
+#### 4.2.7.1. Создаю роль для докера
+```bash
+nano ~/ansible/roles/docker/tasks/main.yml
+```
+ 
+После
+```yml
+---
+# tasks file for roles/docker
+```
+ 
+Вставляю
+```yml
+# Установка Docker на ОС на базе RedHat
+- name: Установка Docker на ОС на базе RedHat
+  when: ansible_os_family == "RedHat"
+  block:
+    - name: Установка dnf-плагина
+      yum:
+        name: dnf-plugins-core
+        state: present
+
+    - name: Добавление репозитория docker
+      command:
+        cmd: dnf config-manager --add-repo https://download.docker.com/linux/centos/docker-ce.repo
+        creates: /etc/yum.repos.d/docker-ce.repo
+
+    - name: Установка docker-пакетов
+      yum:
+        name:
+          - docker-ce
+          - docker-ce-cli
+          - containerd.io
+          - docker-buildx-plugin
+          - docker-compose-plugin
+        state: present
+
+# Установка Docker на ОС на базе Debian 
+- name: Установка Docker на ОС на базе Debian
+  when: ansible_os_family == "Debian"
+  block:
+    - name: Установка зависимостей
+      apt:
+        name:
+          - ca-certificates
+          - curl
+        state: present
+        update_cache: true
+
+    - name: Создание директории для ключей
+      file:
+        path: /etc/apt/keyrings
+        state: directory
+        mode: '0755'
+
+    - name: Скачивание GPG ключа docker
+      get_url:
+        url: https://download.docker.com/linux/debian/gpg
+        dest: /etc/apt/keyrings/docker.asc
+        mode: '0644'
+
+    - name: Добавление репозитория docker вручную
+      block:
+        - name: Формируем строку репозитория docker
+          set_fact:
+            docker_repo_entry: >-
+              deb [arch=amd64 signed-by=/etc/apt/keyrings/docker.asc]
+              https://download.docker.com/linux/debian
+              {{ ansible_lsb.codename }} stable
+
+        - name: Вставка репозитория в docker.list
+          lineinfile:
+            path: /etc/apt/sources.list.d/docker.list
+            line: "{{ docker_repo_entry }}"
+            create: yes
+
+    - name: Обновление кэша репозиториев
+      apt:
+        update_cache: yes
+
+    - name: Установка docker-пакетов
+      apt:
+        name:
+          - docker-ce
+          - docker-ce-cli
+          - containerd.io
+          - docker-buildx-plugin
+          - docker-compose-plugin
+        state: present
+
+# Запуск docker и добавление в автозагрузку
+- name: Запуск docker и добавление в автозагрузку
+  service:
+    name: docker
+    enabled: true
+    state: started
+
+# Добавление пользователя в группу docker
+- name: Создание группы docker
+  group:
+    name: docker
+    state: present
+
+- name: Добавление пользователя в группу docker
+  user:
+    name: "{{ ansible_user }}"
+    groups: [docker]
+    append: yes
+
+# Переподключение для обновления SSH-сессии (замена newgrp docker)
+- name: Перезагрузка машины
+  reboot:
+    reboot_timeout: 300
+
+# Проверка docker через hello-world
+- name: Проверка docker через hello-world
+  command: docker run --rm hello-world
+  register: docker_hello_output
+  changed_when: false
+  ignore_errors: true
+
+- name: Вывод результата STDOUT hello-world
+  debug:
+    var: docker_hello_output.stdout_lines
+
+- name: Вывод результата STDERR hello-world
+  debug:
+    var: docker_hello_output.stderr_lines
+  when: docker_hello_output.rc != 0
+
+- name: Остановка плейбука, если docker не работает
+  fail:
+    msg: "Падаем, докер не работает. Выше логи."
+  when: docker_hello_output.rc != 0
+```
+ 
+> Что было интересного тут:
+> * Обновление групп пользователя. И вот почему:
+>    * `newgrp docker` не подходит, т.к. в ансибл команда сработает только в рамках одной задачи: запускается новая шелл-сессия, применяется группа и сразу все завершается, т.е. на следующие задачи это не повлияет
+>    * Узнала про `meta: reset_connection`. Думала, что поможет, т.к. она закрывает и устанавливает новое SSH-соединение. Но оказалось, что не поможет. Т.к. это не полноценный разлогин/логин: пользователь тот же, логин-сессия не пересоздаётся. Т.е. полезно, если нужно обновить окружение, но для обновления групп пользователя не подходит.
+>    * Узнала, что в ансибл есть полноценный аналог "выйти и зайти нормально". `reboot` перезагружает сервер, ждёт, пока тот поднимется, и переподключается сам. Я думала, что запросит пароль для судо, но оказалось, что все ок: ансиблу достаточно того, что он уже получил пароль один раз, а дальше он просто использует его. 
+> 
+>         Думаю, что при настройке сервера с нуля, как сейчас в задаче - так можно делать спокойно. А если это уже работающий сервер с другими сервисами, то так не надо. В целом, можно продолжать работать с докером через `sudo` - ничего от этого не случится плохого. Если по какой-то причине нужно работать от определнного пользователя и без судо, то:
+>        * лучше перезагрузить сервер руками
+>        * там, где я добавляю в группу `ansible_user` есть смысл прописать свою переменную с именем нужного пользователя, если это не тот же, от лица которого мы подключаемся
+> 
+>         ps. хотя все равно думаю, что это избыточно, и можно работать из под текущего юзера с судо.
+> 
+> * Попыталась добавить отладку для проверки работоспособности докера. Как я поняла, `hello word` дает наибольшее представление о его статусе, поэтому оставила ее, как предлагают в доке, и ориентировалась на ее вывод
+> * В задаче по проверке докера через `hello-world` поставила `ignore_errors: true` не чтобы игнорировать ошибки, а как раз для отладки, чтобы можно было понять, что пошло не так с полноценным выводом
+ 
+ 
+#### 4.2.7.2. Тестирую роль для докера
+ 
+Запускаю плейбук:
+```bash
+ansible-playbook -i inventory.ini playbook.yml --ask-become-pass -v --tags docker
+```
+ 
+Тесты пройдены:
+![alt text](image-88.png)
+ 
