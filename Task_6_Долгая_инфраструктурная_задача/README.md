@@ -1414,16 +1414,18 @@ nano ~/ansible/inventory.ini
  
 Прописываю явно `ansible_python_interpreter` для серверов на альме, т.к. теперь на серверах с альмалинукс два питона (системный и пользовательский) - чтобы не было путаницы:
 ```bash
-[gitlab_servers]
-gitlab-server ansible_user=kaya ansible_python_interpreter=/usr/bin/python3
+[servers_on_almalinux]
+gitlab-server 
+docker-registry 
 
-[gitlab_runners]
-gitlab-runner ansible_user=kaya
+[servers_on_debian]
+gitlab-runner 
 
-[docker_registries] 
-docker-registry ansible_user=kaya ansible_python_interpreter=/usr/bin/python3
+[servers_on_almalinux:vars]
+ansible_python_interpreter=/usr/bin/python3
 
 [all:vars]
+ansible_user=kaya
 ansible_ssh_private_key_file=/home/kaya/.ssh/id_rsa
 ```
 > Глобально путь к питоне не задаю, чтобы ансибл не сломался на серверах с другой ОС 
