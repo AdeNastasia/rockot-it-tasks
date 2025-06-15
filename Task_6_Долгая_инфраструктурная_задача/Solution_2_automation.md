@@ -525,6 +525,22 @@ timedatectl status
 UPD: при втором прохождении добавила перезагрузку ВМ в плейбуки. Иногда срабатывало нормально, иногда зависало на том, что ВМ хотела загрузиться с CD, а там было пусто.
 Поэтому оставила только жесткий диск, чтобы большого такого не было:
 ![alt text](image-166.png)
+
+### 1.7. Настройка файла hosts для разрешения имен на хосте с Windows
+ 
+На ноуте не стала настраивать DNS, чтобы не менять системные параметры.  
+Вместо этого добавляю имена вручную в файл `hosts`.
+1. Пуск → Поиск → Блокнот → ПКМ → Запуск от имени администратора
+2. В блокноте открываю путь `C:\Windows\System32\drivers\etc\`
+3. Выбираю тип файла "Все файлы"
+4. Из появившегося списка выбираю `hosts`
+5. Вставляю строки:
+```bash
+172.20.10.2    gitlab-runner.lan
+172.20.10.3    gitlab-server.lan
+172.20.10.4    docker-registry.lan
+```
+6. Сохраняю
  
 ## Этап 2. Автоматизация первого решения
 Как вижу решение:
@@ -893,6 +909,7 @@ static_ip_map:
     address: 172.20.10.2
 ```
  
+### 2.2.3.3. Тестирую бутстрап-плейбук
 Запускаю бутстрап-плейбук:
 ```bash
 ansible-playbook -i inventory.ini bootstrap-playbook.yml --ask-become-pass
@@ -949,12 +966,10 @@ nano playbook.yml
     - docker
   tags: docker
 
-- name: Поднимаем гитлаб-сервер в докер-контейнере - установка MTA (postfix) + сам гитлаб-сервер 
+- name: Поднимаем гитлаб-сервер в докер-контейнере 
   hosts: gitlab-server
   become: true
   roles:
-    - role: postfix
-      tags: postfix
     - role: gitlab_server
       tags: gitlab_server
 
@@ -976,6 +991,7 @@ nano playbook.yml
 > Для каждой роли прописала тег, чтобы можно было запускать каждую роль по отдельности для отладки. Можно было бы прописать несколько тегов в квадратных скобках, но пока не придумала уместную для задачи ситуацию.
 > 
 > Кстати, я попутно узнала, что для ролей все пишут вместо пробелов нижнее подчеркивание, а для имен серверов в инвентори пишут дефис.
+> Для гитлаб сервера сперва прописывала установку postfix, т.к. делала так в первом решении. Но в первом решении это архаизм, т.к. сперва я ставила гитлаб без докер контейнера. При установке в докер-контейнере все необходимое уже внутри есть, так что убрала
 
 ### 2.2.6. Роль common
 #### 2.2.6.1. Создаю роль для базовой настройки системы
@@ -1355,3 +1371,143 @@ ansible-playbook -i inventory.ini playbook.yml --ask-become-pass -v --tags docke
  
 ![alt text](image-169.png)
 
+### 2.2.8. Роль для установки гитлаб-сервера
+#### 2.2.8.1. Установка модуля докер для ансибл
+Нашла такой, устанавливаю:
+```bash
+ansible-galaxy collection install community.docker
+```
+ 
+#### 2.2.8.2. Создаю роль для gitlab_server
+```bash
+nano roles/gitlab_server/tasks/main.yml
+```
+ 
+После
+```yml
+---
+# tasks file for roles/gitlab_server
+```
+
+Вставляю
+```yml
+- name: Создание директории для данных gitlab server
+  file:
+    path: "{{ item }}"
+    state: directory
+    mode: '0755'
+  loop:
+    - "{{ gitlab_base_dir }}"
+    - "{{ gitlab_config_dir }}"
+    - "{{ gitlab_logs_dir }}"
+    - "{{ gitlab_data_dir }}"
+
+- name: Копирование docker-compose.yml 
+  template:
+    src: docker-compose.yml.j2
+    dest: "{{ gitlab_base_dir }}/docker-compose.yml"
+    mode: '0644'
+
+- name: Запуск gitlab server через docker compose
+  community.docker.docker_compose_v2:
+    project_src: "{{ gitlab_base_dir }}"
+    state: present
+  register: compose_result
+
+- name: Дебаг - вывод результата запуска gitlab server
+  debug:
+    msg: >-
+      {% if compose_result.changed %}
+      Были изменения: контейнер gitlab server запустился.
+      {% else %}
+      Без изменений: контейнер gitlab server уже был.
+      {% endif %}
+
+- name: Проверка доступности gitlab server по HTTP
+  uri:
+    url: "{{ gitlab_external_url }}"
+    status_code: 200
+  register: gitlab_check
+  retries: 20
+  delay: 30
+  until: gitlab_check.status == 200
+
+- name: Дебаг - вывод результата проверки gitlab server по HTTP
+  debug:
+    msg: >-
+      {% if gitlab_check.status == 200 %}
+      Gitlab server доступен по адресу {{ gitlab_external_url }}.
+      {% else %}
+      Gitlab server недоступен по адресу {{ gitlab_external_url }}: {{ gitlab_check.status }}
+      {% endif %}
+```
+* Изначально давала меньше времени для задачи проверки по hhtp, но на моих ВМ долго стартует
+ 
+Определяю переменные для роли:
+```bash
+nano roles/gitlab_server/defaults/main.yml
+```
+ 
+После:
+```yml
+---
+# defaults file for roles/gitlab_server
+```
+ 
+Вставляю:
+```yml
+gitlab_version: "17.9.3-ce.0"
+
+gitlab_hostname: "gitlab-server.lan"
+gitlab_external_url: "http://gitlab-server.lan"
+
+gitlab_ssh_port: 2222
+gitlab_http_port: 80
+gitlab_https_port: 443
+
+gitlab_base_dir: "/srv/gitlab"
+gitlab_config_dir: "{{ gitlab_base_dir }}/config"
+gitlab_logs_dir: "{{ gitlab_base_dir }}/logs"
+gitlab_data_dir: "{{ gitlab_base_dir }}/data"
+```
+
+Создаю шаблон
+```bash
+nano roles/gitlab_server/templates/docker-compose.yml.j2
+```
+ 
+Вставляю:
+```yml
+version: '3.6'
+
+services:
+  gitlab:
+    image: gitlab/gitlab-ce:{{ gitlab_version }}
+    container_name: gitlab
+    restart: always
+    hostname: '{{ gitlab_hostname }}'
+    environment:
+      GITLAB_OMNIBUS_CONFIG: |
+        external_url '{{ gitlab_external_url }}'
+        gitlab_rails['gitlab_shell_ssh_port'] = {{ gitlab_ssh_port }}
+    ports:
+      - '{{ gitlab_http_port }}:80'
+      - '{{ gitlab_https_port }}:443'
+      - '{{ gitlab_ssh_port }}:22'
+    volumes:
+      - '{{ gitlab_config_dir }}:/etc/gitlab'
+      - '{{ gitlab_logs_dir }}:/var/log/gitlab'
+      - '{{ gitlab_data_dir }}:/var/opt/gitlab'
+    shm_size: '256m'
+```
+
+#### 2.2.8.3. Тестирую роль для gitlab_server
+ 
+Запускаю плейбук:
+```bash
+ansible-playbook -i inventory.ini playbook.yml --ask-become-pass -v --tags gitlab_server
+```
+ 
+Тесты пройдены:
+![alt text](image-170.png)
+ 
