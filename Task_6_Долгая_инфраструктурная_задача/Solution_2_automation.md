@@ -1230,7 +1230,7 @@ nano roles/docker/tasks/main.yml
 > 
  
  <details>
-<summary><strong>Приложение: установка докер по оф. инструкции (сложнее)</strong>
+<summary><strong>Приложение: установка докер по оф. инструкции (сложнее)</strong></summary>
 Сама роль: 
 
 ```yml
@@ -1356,8 +1356,7 @@ nano roles/docker/tasks/main.yml
     msg: "Падаем, докер не работает. Выше логи."
   when: docker_hello_output.rc != 0
 ```
- 
-</summary>
+</details>
  
  
 #### 2.2.7.2. Тестирую роль для докера
@@ -1465,6 +1464,8 @@ gitlab_ssh_port: 2222
 gitlab_http_port: 80
 gitlab_https_port: 443
 
+gitlab_root_password: "verYstr0nGOcheNNN"
+
 gitlab_base_dir: "/srv/gitlab"
 gitlab_config_dir: "{{ gitlab_base_dir }}/config"
 gitlab_logs_dir: "{{ gitlab_base_dir }}/logs"
@@ -1487,6 +1488,7 @@ services:
     restart: always
     hostname: '{{ gitlab_hostname }}'
     environment:
+      GITLAB_ROOT_PASSWORD: "{{ gitlab_root_password }}"
       GITLAB_OMNIBUS_CONFIG: |
         external_url '{{ gitlab_external_url }}'
         gitlab_rails['gitlab_shell_ssh_port'] = {{ gitlab_ssh_port }}
@@ -1510,4 +1512,38 @@ ansible-playbook -i inventory.ini playbook.yml --ask-become-pass -v --tags gitla
  
 Тесты пройдены:
 ![alt text](image-170.png)
+ 
+### 2.2.9. Захожу в гитлаб-сервер, получаю токен для юудущего раннера
+> Выглядит пока так, что это нужно будет делать вручную.
+ 
+В ручном способе я получала пароль администратора вручную. Сейчас задала его при поднятии.
+ 
+Захожу в GitLab под пользователем root, ввожу пароль.
+
+Я в здании:
+![alt text](image-171.png) 
+Снова уведомлялка, что любой пользователь может зарегистрироваться самостоятельно. Так как мой GitLab — локальный и приватный, открытая регистрация не нужна. Жмакаю `Deactivate`, чтобы отключить создание аккаунтов для всех, кроме администратора.
+ 
+Как и при ручной установке:
+- Создаю первый проект:
+![alt text](image-172.png)
+ 
+- Проверяю, что SSH-URL проекта с портом 2222, а не 22:
+![alt text](image-173.png)
+ 
+> Вижу уведомелние:
+> ![alt text](image-174.png)
+> Сразу с ним разберемся. Допустим, пушать буду с всл. Кликаю по синей кнопке и вставляю вывод `cat ~/.ssh/id_rsa.pub` с всл 
+ 
+Получаю токен для **Instance Runner** (чтобы он был доступен для всех проектов в GitLab и не был привязан к какому-то конкретному репозиторию).
+ 
+1. Перехожу в интерфейс гитлаба: http://gitlab-server.lan/admin/runners
+2. Settings → CI/CD → Runners
+3. Жму `New Instance Runner`
+4. Заполняю:
+![alt text](image-175.png)
+5. Жму кнопку Create Runner, которая раньше меня смущала своим названием
+> Как я понимаю, мы в интерфейсе гитлаба создаем описание раннера, гиталб под него создает "пустой слот",  выдает нам данные для регистрации раннера, мы раннер регистрируем с помощью gitlab-runner register, зареганный раннер подключается с нужным токеном, и после подключения раннер активируется и привязывается к этому слоту
+6. Беру токен и несу в переменные - `glrt-t1_1txE2igLA_mE452T_EnJ`
+![alt text](image-176.png)
  
