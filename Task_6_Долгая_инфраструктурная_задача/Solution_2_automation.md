@@ -1547,3 +1547,173 @@ ansible-playbook -i inventory.ini playbook.yml --ask-become-pass -v --tags gitla
 6. Беру токен и несу в переменные - `glrt-t1_1txE2igLA_mE452T_EnJ`
 ![alt text](image-176.png)
  
+### 2.2.10. Роль для установки гитлаб-раннера
+#### 2.2.10.1. Создаю роль
+```bash
+nano roles/gitlab_runner/tasks/main.yml
+```
+ 
+После
+```yml
+---
+# tasks file for roles/gitlab_runner
+```
+ 
+Вставляю
+```yml
+- name: Создание каталога под докер вольюм для хранения конфигов
+  file:
+    path: "{{ gitlab_runner_config_path }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+    recurse: yes
+
+- name: Запуск контейнера gitlab-runner
+  community.docker.docker_container:
+    name: gitlab-runner
+    image: gitlab/gitlab-runner:latest
+    restart_policy: always
+    state: started
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - "{{ gitlab_runner_config_path }}:/etc/gitlab-runner"
+    etc_hosts:
+      gitlab-server.lan: "{{ hostvars['gitlab-server']['ansible_host'] }}"
+
+- name: Регистрация gitlab-runner
+  community.docker.docker_container_exec:
+    container: gitlab-runner
+    command: >
+      gitlab-runner register
+      --non-interactive
+      --url "{{ gitlab_runner_url }}"
+      --registration-token "{{ gitlab_runner_token }}"
+      --executor "{{ gitlab_runner_executor }}"
+      --description "{{ gitlab_runner_description }}"
+      --tag-list "{{ gitlab_runner_tags }}"
+      --run-untagged="true"
+      --locked="false"
+      --docker-image "{{ gitlab_runner_image }}"
+
+- name: Ожидание появления config.toml
+  ansible.builtin.wait_for:
+    path: "{{ gitlab_runner_config_path }}/config.toml"
+    state: present
+  timeout: 10
+
+- name: Добавление extra_hosts в config.toml
+  ansible.builtin.lineinfile:
+    path: "{{ gitlab_runner_config_path }}/config.toml"
+    insertafter: '\[runners.docker\]'
+    line: '  extra_hosts = {{ gitlab_runner_add_host | to_json }}'
+```
+> * `etc_hosts` - аналог `--add-host` и добавляет строчку в `/etc/hosts` контейнера раннера, чтобы сам раннер мог зарегистрироваться на гитлаб сервере.
+> * `extra_hosts` - добавляет строчку в `/etc/hosts` каждого джоб-контейнера, который запускаеи раннер. Чтобы джобы могли достучаться до гитлаб сервера по имени.
+  
+Определяю переменные для роли:
+```bash
+nano roles/gitlab_runner/defaults/main.yml
+```
+ 
+После:
+```yml
+---
+# defaults file for roles/gitlab_runner
+```
+ 
+Вставляю:
+```yml
+gitlab_runner_config_path: "/srv/gitlab-runner/config"
+gitlab_runner_token: "glrt-t1_1txE2igLA_mE452T_EnJ"  # надо менять
+gitlab_runner_url: "http://gitlab-server.lan"
+gitlab_runner_description: "docker-runner"
+gitlab_runner_tags: "docker"
+gitlab_runner_executor: "docker"
+gitlab_runner_image: "alpine:latest"
+gitlab_runner_add_host:
+  - "gitlab-server.lan:{{ hostvars['gitlab-server']['ansible_host'] }}"
+```
+> * При первом прохождении делала докер вольюм (`sudo docker volume create gitlab-runner-config`). Юра писал, что с каталогами проще, а /srv/gitlab-runner/config было в примерах в доке, поэтому взяла такую директорию
+> * Про `{{ hostvars['gitlab-server']['ansible_host'] }}` - вроде удобно, если только 3 контейнера развернуть. Но если масштабировать, наверное, удобнее прописать вручную адрес. Пока так оставила
+ 
+#### 2.2.10.2. Тестирую роль для gitlab_runner
+ 
+Запускаю плейбук:
+```bash
+ansible-playbook -i inventory.ini playbook.yml --ask-become-pass -v --tags gitlab_runner
+```
+ 
+По тестам все ок:
+![alt text](image-181.png)
+ 
+#### 2.2.10.3. Вручную проверяю работу на тестовом пайплайне
+ 
+Работаю с всл, с нее же проверяю подключение:
+```bash
+ ssh -T -p 2222 git@gitlab-server.lan
+```
+> * -p 2222 - потому что ранее пробрасывали его вместо 22
+ 
+Как обычно, если не просят пароль, значит все хорошо:
+![alt text](image-178.png)
+  
+Клонирую проект по SSH
+```bash
+cd /home/kaya/repos/from_local_gitlab
+git clone ssh://git@gitlab-server.lan:2222/root/test-project-1.git
+```
+> Тут погуглила, что SSH-ссылки бывают в короткой и длинной форме.
+> По умолчанию - короткая.
+> Длинная используется, когда у нас нестандартный порт или нужен URI-формат.
+  
+Проверяю, что у меня нужные настройки гита:
+```bash
+git config --list
+```
+  
+Создаю тестовый ci-cd:
+```bash
+cd test-project-1
+```
+  
+```bash
+nano .gitlab-ci.yml
+```
+ 
+Вставляю (обязательно с тегом докер, т.к. раннер создавала с тегом):
+```bash
+stages:
+  - test
+
+echo_ok_job:
+  stage: test
+  tags:
+    - docker
+  script:
+    - echo "ok"
+```
+ 
+Проверяю название ветки:
+```bash
+git branch
+```
+Никакое, потому что при создании репозитория я сняла галочку с создания ридми, и репозиторий оказался пустой:
+ 
+![alt text](image-179.png)
+ 
+Создаю ветку, сохраняю изменения и делаю пуш:
+```bash
+git checkout -b main
+git add .
+git commit -m "add test .gitlab-ci.yml"
+git push -u origin main
+```
+ 
+Проверяю в UI гитлаба, что все в порядке:
+Project → Build → Pipelines:
+![alt text](image-70.png)
+> Первый не появлялся минуту-две, и я запустила второй (без указания тега докер). Когда зашла првоерить, поняла, что все просто тормозит, но работает
+![alt text](image-180.png)
+ 
