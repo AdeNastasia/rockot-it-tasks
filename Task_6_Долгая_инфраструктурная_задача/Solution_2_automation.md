@@ -981,7 +981,7 @@ nano playbook.yml
   tags: gitlab_runner
 
 - name: Поднимаем докер-регистри в докер-контейнере
-  hosts: docker-registry
+  hosts: all
   become: true
   roles:
     - docker_registry
@@ -1208,6 +1208,34 @@ nano roles/docker/tasks/main.yml
   fail:
     msg: "Падаем, докер не работает. Выше логи."
   when: docker_hello_output.rc != 0
+
+- name: Настройка использования локального регистри по http
+  when: inventory_hostname == "gitlab-runner"
+  template:
+    src: daemon.json.j2
+    dest: /etc/docker/daemon.json
+    owner: root
+    group: root
+    mode: '0644'
+  when: 
+     
+- name: Перезапуск docker
+  when: inventory_hostname == "gitlab-runner"
+  service:
+    name: docker
+    state: restarted
+```
+ 
+Создаю шаблон:
+```bash
+nano roles/docker/templates/daemon.json.j2
+```
+ 
+Вставляю:
+```json
+{
+  "insecure-registries": ["{{ hostvars[inventory_hostname]['ansible_fqdn'] }}:5000"]
+}
 ```
  
 > Что было интересного тут:
@@ -1227,6 +1255,7 @@ nano roles/docker/tasks/main.yml
 > * Изначально роль была другая (первая версия роли ниже, в приложении):
 >     * Для Альмы использовала добавляла репозиторий докера через command. Увидела предупрждение от докера - `[WARNING]: Consider using the dnf module rather than running 'dnf'.  If you need to use command because dnf is insufficient you can add 'warn: false' to this command task or set 'command_warnings=False' in ansible.cfg to get rid of this message.` -, изменила на добавление репозитория с помощью `yum_repository`
 >     * Для Дебиан сперва устанавливала докер аналогично его оф. инструкции. После комментария Юры сменила на установку из apt, чтобы уменьшить количество шагов. На Альмалинукс не стала ставить через yum/dnf, так как команда установки докера ставит подман
+> * Добавила разрешение раннеру обращаться к докер регистри по http
 > 
  
  <details>
@@ -1400,6 +1429,7 @@ nano roles/gitlab_server/tasks/main.yml
     - "{{ gitlab_config_dir }}"
     - "{{ gitlab_logs_dir }}"
     - "{{ gitlab_data_dir }}"
+    - "{{ gitlab_backups_dir }}"
 
 - name: Копирование docker-compose.yml 
   template:
@@ -1470,6 +1500,7 @@ gitlab_base_dir: "/srv/gitlab"
 gitlab_config_dir: "{{ gitlab_base_dir }}/config"
 gitlab_logs_dir: "{{ gitlab_base_dir }}/logs"
 gitlab_data_dir: "{{ gitlab_base_dir }}/data"
+gitlab_backups_dir: "{{ gitlab_data_dir }}/backups"
 ```
 
 Создаю шаблон
@@ -1500,6 +1531,7 @@ services:
       - '{{ gitlab_config_dir }}:/etc/gitlab'
       - '{{ gitlab_logs_dir }}:/var/log/gitlab'
       - '{{ gitlab_data_dir }}:/var/opt/gitlab'
+      - '{{ gitlab_backups_dir }}:/var/opt/gitlab/backups
     shm_size: '256m'
 ```
 
@@ -1513,7 +1545,7 @@ ansible-playbook -i inventory.ini playbook.yml --ask-become-pass -v --tags gitla
 Тесты пройдены:
 ![alt text](image-170.png)
  
-### 2.2.9. Захожу в гитлаб-сервер, получаю токен для юудущего раннера
+### 2.2.9. Захожу в гитлаб-сервер, получаю токен для будущего раннера
 > Выглядит пока так, что это нужно будет делать вручную.
  
 В ручном способе я получала пароль администратора вручную. Сейчас задала его при поднятии.
@@ -1716,4 +1748,111 @@ Project → Build → Pipelines:
 ![alt text](image-70.png)
 > Первый не появлялся минуту-две, и я запустила второй (без указания тега докер). Когда зашла првоерить, поняла, что все просто тормозит, но работает
 ![alt text](image-180.png)
+ 
+### 2.2.11. Роль для установки docker_registry
+#### 2.2.11.1. Создаю роль
+```bash
+nano roles/docker_registry/tasks/main.yml
+```
+ 
+После
+```yml
+---
+# tasks file for roles/docker_registry
+```
+ 
+Вставляю
+```yml
+- name: Подготовка к установке docker registry
+  when: inventory_hostname == "docker-registry"
+  block:
+  - name: Установка pip на редхат
+    dnf:
+      name: python3-pip
+      state: present
+    when: ansible_os_family == "RedHat"
+
+  - name: Установка библиотек docker и requests
+    pip:
+      name:
+        - docker
+        - requests
+
+- name: Установка docker registry
+  when: inventory_hostname == "docker-registry"
+  block:
+  - name: Создание каталога под докер вольюм
+    file:
+      path: "{{ registry_data_dir }}"
+      state: directory
+      owner: root
+      group: root
+      mode: "0755"
+      recurse: yes
+
+  - name: Запуск контейнера registry
+    community.docker.docker_container:
+      name: registry
+      image: registry:2
+      restart_policy: always
+      state: started
+      volumes:
+        - "{{ registry_data_dir }}:/var/lib/registry"
+      ports:
+        - 5000:5000
+
+  - name: Открываю порт 5000 в редхат
+    firewalld:
+      port: 5000/tcp
+      permanent: yes
+      state: enabled
+      immediate: yes
+    when: ansible_os_family == "RedHat"
+
+- name: Проверка доступности docker registry
+  when: inventory_hostname == "gitlab-runner"
+  block:
+    - name: Проверка сервера с гитлаб-раннер
+      uri:
+        url: "http://{{ hostvars['docker-registry']['ansible_host'] }}:5000/v2/_catalog"
+        status_code: 200
+        return_content: yes
+      register: registry_check
+      retries: 5
+      delay: 3
+      until: registry_check.status == 200
+
+    - name: Вывод ответа
+      debug:
+        var: registry_check.content
+```
+ 
+  
+Определяю переменные для роли:
+```bash
+nano roles/docker_registry/defaults/main.yml
+```
+ 
+После:
+```yml
+---
+# defaults file for roles/docker_registry
+```
+ 
+Вставляю:
+```yml
+registry_data_dir: "/srv/registry/data"
+docker_data_dir: "/etc/docker"
+```
+> *  После этой роли сменила в основном плейбуке hosts с docker-registry на all, ччобы была внешняя проверка подключения
+ 
+#### 2.2.10.2. Тестирую роль для docker_registry
+ 
+Запускаю плейбук:
+```bash
+ansible-playbook -i inventory.ini playbook.yml --ask-become-pass -v --tags docker_registry
+```
+ 
+По тестам все ок:
+![alt text](image-192.png)
  
