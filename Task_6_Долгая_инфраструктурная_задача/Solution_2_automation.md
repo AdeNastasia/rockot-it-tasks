@@ -550,6 +550,185 @@ UPD: при втором прохождении добавила перезаг�
 * Установка и настройка dns на сервере gitlab-runner (можно как dnsmasq, так и /etc/hosts. при первом прохождении настраивала dnsmasq, сейчас выбрала /etc/hosts)
  
 2) Второй плейбук — основное решение задания
+
+### optional 2.2.0. Создание реверс прокси
+> P.S. В ходе решения появился еще один сервер с убунту для nginx, его пока не автоматизирую, чтобы совсем не растягивать сдачу задания. Пропишу создание на этом этапе. В целом, на этом же сервере можно поднять dnsmasq, который делала в первом задании. Но опять же, чтобы совсем не растягивать, пока оставляю как есть
+ 
+> Делаю для удобства, чтобы при переезде на новый сервер имя у локального гитлаба не менялось в конфигах. 
+ 
+У меня была ВМ с убунту свободная. Беру ее, настраиваю новый статический ip, т.к. старый совпадает с одной из других ВМ
+ 
+#### Настройка сети
+Проверяю, какой используется сетевой менеджер. Должен быть один из этих:
+* NetworkManager
+* systemd-networkd
+* networking
+ 
+В этот раз моя остановочка - systemd-networkd. И здесь узнала новое.
+> На серверах (в частности на моей убунту) может стоять Netplan, который создаёт настройки для NetworkManager или systemd-networkd (смотря, что в статусе is-active).
+И если он есть, то простое изменение настроек, например, через systemd-networkd никакого результата не даст. 
+ 
+Проверить, есть ли нетплан на сервере можно, проверив, есть ли у него какие-то конфиги:
+```bash
+cd /etc/netplan/ && ll
+```
+ 
+У меня есть файл `50-cloud-init.yaml`. Там прописан `dhcp: true`,  а в начале есть такие коментарии:
+```bash
+# This file is generated from information provided by the datasource.  Changes
+# to it will not persist across an instance reboot.  To disable cloud-init's
+# network configuration capabilities, write a file
+# /etc/cloud/cloud.cfg.d/99-disable-network-config.cfg with the following:
+# network: {config: disabled}
+```
+ 
+Как я поняла, у меня на ВМ с убунту стоит `cloud-init` (инструмент инициализации облачных ВМ при первом старте), который может генерировать netplan-конфигурации для настройки сети. Хотя моя убунту не облачная, но я ее давно поднимала для практики и брала образ, который давали в задании, может, в нем была такая настройка.
+ 
+По идее, для полноценной конфигурации сети надо отключить управление `cloud-init` сетью, чтобы настройки не слетали при следующем первом старте (т.е. при инициализации нового экземпляра, например, при клонировании). 
+И чтобы это сделать, надо:
+```bash
+cd /etc/cloud/cloud.cfg.d/
+```
+и
+```bash
+sudo nano 99-disable-network-config.cfg
+```
+ 
+и туда вставить `network: {config: disabled}`.
+ 
+Я пока ВМ клонировать не собираюсь, поэтому здесь прописала настройки для статики:
+```bash
+network:
+    ethernets:
+        enp0s3:
+            addresses:
+              - 172.20.10.8/24
+            gateway4: 172.20.10.1
+            nameservers:
+              addresses:
+                - 8.8.8.8
+    version: 2
+```
+![alt text](image-182.png)
+
+Т.к. перезапуск не считается первой иницализацией, то у меня все без проблем работает.
+ 
+Применяю новые настройки:
+```bash
+sudo netplan apply
+```
+ 
+Проверяю:
+```bash
+ip a
+```
+![alt text](image-183.png)
+ 
+В `etc/hosts` в виндовс пропишу, как будем обращаться к машине (уважительно):
+![alt text](image-184.png)
+ 
+Дальше ставлю сам nginx:
+```bash
+sudo apt update
+sudo apt install nginx-full -y
+```
+> * Сперва поставила простой nginx, но в нем не было модуля `stream`, который я использовала для 2222 порта, поэтому теперь сразу ставлю `nginx-full` 
+ 
+Проверяю статус на `active`:
+```bash
+sudo systemctl status nginx
+```
+ 
+Добавлю конфигурацию для гитлаба:
+```bash
+sudo nano /etc/nginx/sites-available/gitlab-proxy.conf
+```
+ 
+#### Настройка реверса
+Настраиваю nginx как реверс прокси, чтобы к гитлабу обращаться по `local-gitlab`, неважно, где он на самом деле:
+ 
+```
+upstream gitlab-backend {
+    server 172.20.10.3:80;  
+    # server 172.20.10.6:80;  
+}
+
+server {
+    listen 80;
+    server_name local-gitlab.lan;
+
+    location / {
+        proxy_pass http://gitlab-backend;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+}
+```
+ 
+* В блоке `upstream` пока сразу прописала два адреса, чтобы потом просто поменять
+* Пишу `local-gitlab.lan`, потому что все остальные сервера делала в похожем стиле
+ 
+Создаю символическую ссылку, чтобы активировать новый конфиг:
+```bash
+sudo ln -s /etc/nginx/sites-available/gitlab-proxy.conf /etc/nginx/sites-enabled/gitlab-proxy.conf
+```
+ 
+Проверяю конфиг на ошибки:
+```bash
+sudo nginx -t
+```
+ 
+Дальше делаю редирект с 2222 на 22, потому что дальше по заданию буду пробрасывать этот порт на гитлаб сервере в контейнер.
+ 
+Объявляю блок `stream` на верхнем уровне. Вроде как лучше подключить конфигурацию, поэтому открываю конфиг:
+```bash
+sudo nano /etc/nginx/nginx.conf 
+```
+
+И подключаю:
+```bash
+include /etc/nginx/gitlab-stream.conf;
+```
+ 
+Затем создаю файл с таким названием:
+```bash
+sudo nano /etc/nginx/gitlab-stream.conf
+```
+
+И в нем прописываю сам редирект:
+```
+stream {
+    upstream gitlab-ssh {
+        server 172.20.10.3:2222;  
+        # server 172.20.10.6:2222;
+    }
+
+    server {
+        listen 2222;
+        proxy_pass gitlab-ssh;
+    }
+}
+```
+ 
+Еще раз проверяю, что все ок:
+```bash
+sudo nginx -t
+```
+
+Перезапускаю nginx:
+```bash
+sudo systemctl restart nginx
+```
+ 
+Проверяю, что работает:
+```bash
+sudo systemctl status nginx 
+```
+ 
+Добавляю запись c `local-gitlab.lan` в `/etc/hosts` на виндовс и еще раз проверяю, что все работает (но уже из браузера - http://local-gitlab.lan):
+![alt text](image-195.png)
  
 ### 2.2.1. Установка Ansible на WSL (Ubuntu)
 Открываю WSL и обновляю пакеты:
@@ -580,6 +759,7 @@ SyntaxError: future feature annotations is not defined
 Я думала, что проблема в устарешем питоне на серверах, но на них стоял свежий питон (версия 3.11) и зависимости. 
 
 Как я поняла, истинная причина была такой:
+ 
 Дело в Ansible 2.17, он ломается, пытаясь использовать свой же модуль на Python 3.11 в zip-виде:
 - эта версия отправляет модули в zip-архивах на удалённые машины
 - внутри zip-архивов есть файлы с конструкцией `from __future__ import annotations`
@@ -607,12 +787,12 @@ source ~/ansible-venv/bin/activate
  
 Установила:
 ```bash
-pip install ansible-core==2.15.9
+pip install ansible-core==2.14.18
 pip install ansible==7.5.0
 ```
 
 Вроде как:
-- ansible-core 2.15.9 — последняя версия без проблем с future annotations в zip-модулях
+- ansible-core 2.14.18 — последняя версия без проблем с future annotations в zip-модулях
 - ansible==7.5.0 — включает нужные коллекции, совместим с этим ядром
  
 Проверка, что все ок:
@@ -626,9 +806,9 @@ rm -rf ~/.ansible/tmp/*
 rm -rf ~/.ansible/facts/cache/*
 ```
  
-Создала симлинк, чтобы активировать окружение из любой директории командой `source venv/bin/activate` 
+Создала симлинк, чтобы активировать окружение без указания полного пути - `source ./start_ansible_venv` 
 ```bash
-ln -s ~/ansible-venv ./venv
+ln -s ~/ansible-venv/bin/activate ./start_ansible_venv
 ```
 </details>
  
@@ -672,7 +852,7 @@ mkdir -p /home/kaya/ansible-projects/rockot-it-tasks/task_6 && cd /home/kaya/ans
 ```bash
 nano inventory.ini
 ```
-> Он у меня единый для бутстрап этапа и для основного. Поэтому его в корне делаю
+> Инвентарь делаю единым для двух этапов: для бутстрап и для основного. Поэтому создаю в корне.
  
 В инвентаре указываю две группы серверов по ip адресам. IP заполняю на основе команды ip addr на самих серверах, имена оставляю себе для ориентации:
 ```bash
@@ -701,12 +881,14 @@ ansible all -i inventory.ini -m ping
  
 ![alt text](image-162.png)
 
-Главное, что нет серверов в статусе unreacheble. Получаю ошибку: на серверах с альмалинукс установлен только системный питон, а пользовательского нет. Т.к. системный использовать не рекомендуется, то ансибл ругается, что питона нет.
-Он нужен, т.к. ансибл для работы по умолчанию использует модули, написанные на питоне, и  поэтому при отсутствии питона он просто не сможет выполнять эти задачи.
-
+Главное, что нет серверов в статусе unreacheble. 
+ 
+> Получаю ошибку: питона нет. Узнала, на моей Альме по умолчанию установлен только platform-python для работы системных утилит (для проверки сделала `ls -l /usr/libexec/platform-python`), но отсутствует CLI-интерпретатор (`which python3` ничего не выводит), необходимый Ансибл.
+Поэтому в бутстрап плейбуке прописываю установку python3, чтобы ансибл мог его использовать для выполнения своих модулей.
+ 
 Для бутстрап этапа я нашла raw-модуль, который работает без питона — это фактически "голый" SSH: отправь команду и получи вывод.
-
-Сейчас все настрою, а пока в инвентарь для будущих задач пропишу, где брать питон. Пропишу сразу для альмалинукс и для дебиан, чтобы было чище.
+ 
+Сейчас сразу пропишу в инвентаре, на какой питон стоит ориентироваться в будущем. И т.к. на первых задачах в бутстрап плейбуке я отключила сборку фактов, то ансибл не будет ругаться, что путь к питону прописан, а самого питона нет.
 > Спойлер, если установить питон из стандартного репозитория, он поставит версию 3.6, и позже будет ругаться, что для работы модулей ансибл нужна версия постарше. Поэтому ниже в бутстрап-плейбуке я ставлю конкретную версию 3.11 и прописываю ее в инвентаре.
  
 ```bash
@@ -760,11 +942,14 @@ nano bootstrap-playbook.yml
           yum install -y epel-release
           yum install -y python3.11 python3.11-pip
           python3.11 -m pip install --upgrade pip
-          python3.11 -m pip install selinux cryptography PyYAML distro six
+# при последующем прохождении добавить в строчку ниже установку еще двух библиотек - docker requests
+          python3.11 -m pip install selinux cryptography PyYAML distro six 
+
         elif [ -f /etc/debian_version ]; then
           apt-get update
           apt-get install -y python3.11 python3.11-distutils python3.11-venv python3.11-pip
           python3.11 -m pip install --upgrade pip
+# при последующем прохождении добавить в строчку ниже установку еще двух библиотек - docker requests
           python3.11 -m pip install selinux cryptography PyYAML distro six
         fi
       when: python_check.rc != 0
@@ -848,7 +1033,7 @@ nano bootstrap-playbook.yml
           {{ params.address }} {{ params.fqdn }} {{ params.hostname }}
           {% endfor %}
 
-    - name: Перезагрузка сервера всех серверов для применения изменений
+    - name: Перезагрузка всех серверов для применения изменений
       ansible.builtin.reboot:
         reboot_timeout: 300
       when:
@@ -869,15 +1054,23 @@ nano bootstrap-playbook.yml
       register: dns_check_runner
       changed_when: false
 
+    - name: Проверка доступности local-gitlab.lan
+      ansible.builtin.command: getent hosts local-gitlab.lan
+      register: dns_check_local_gitlab
+      changed_when: false
+
     - name: Дебаг - Проверка резолвинга имён
       debug:
         msg: |
-          GitLab: {{ dns_check_gitlab.stdout }}
-          Registry: {{ dns_check_registry.stdout }}
-          Runner: {{ dns_check_runner.stdout }}
+          gitlab-server: {{ dns_check_gitlab.stdout }}
+          docker-registry: {{ dns_check_registry.stdout }}
+          gitlab-runner: {{ dns_check_runner.stdout }}
+          gitlab-proxy: {{ dns_check_local_gitlab.stdout }}
 ```
 > Примечание:
 > * Изначально ставила питон на альмалинукс из оф. репозиториев командой `yum install -y python3`, но ставился питон 3.6 и ансибл ругался, что версия питона слишком старая, модули не могут выполниться, поэтому ставила из epel-release
+> * Задача "- name: Проверка доступности local-gitlab.lan" появилась при выполнении 3 этапа, там подробности
+> * Для роли docker registry потребовались билблиотеки docker requests, пока оставила комментариями на будущее
 > 
  
 Создаю директорию и файл для переменных:
@@ -907,6 +1100,11 @@ static_ip_map:
     fqdn: gitlab-runner.lan
     hostname: gitlab-runner
     address: 172.20.10.2
+
+  gitlab-proxy:
+    fqdn: local-gitlab.lan
+    hostname: local-gitlab
+    address: 172.20.10.8
 ```
  
 ### 2.2.3.3. Тестирую бутстрап-плейбук
@@ -933,13 +1131,13 @@ ansible-galaxy init roles/docker
 ansible-galaxy init roles/gitlab_server
 ansible-galaxy init roles/gitlab_runner
 ansible-galaxy init roles/docker_registry
-ansible-galaxy init roles/postfix
 ```
 > Роль common создала не сразу. Опять слетело время. Так как это иногда случается, то пусть будет отдельная роль на такие случаи, ну и мб потом пригодятся настройки какие.
  
 > Для памятки: после команд у нас создались соответствующие директории с единой структурой. Посмотреть можно с помощью `tree roles`:
->  ![alt text](image-80.png)
-
+ 
+>  ![alt text](image-210.png)
+ 
 Пока роли пустые, буду наполнять по одной: наполнила, протестировала, пошла дальше. Чтобы потом не было всего в куче. 
  
 ### 2.2.5. Создаю основной плейбук 
@@ -966,7 +1164,7 @@ nano playbook.yml
     - docker
   tags: docker
 
-- name: Поднимаем гитлаб-сервер в докер-контейнере 
+- name: Поднимаем гитлаб-сервер в докер-контейнере
   hosts: gitlab-server
   become: true
   roles:
@@ -1217,8 +1415,7 @@ nano roles/docker/tasks/main.yml
     owner: root
     group: root
     mode: '0644'
-  when: 
-     
+
 - name: Перезапуск docker
   when: inventory_hostname == "gitlab-runner"
   service:
@@ -1470,7 +1667,7 @@ nano roles/gitlab_server/tasks/main.yml
       Gitlab server недоступен по адресу {{ gitlab_external_url }}: {{ gitlab_check.status }}
       {% endif %}
 ```
-* Изначально давала меньше времени для задачи проверки по hhtp, но на моих ВМ долго стартует
+* Изначально давала меньше времени для задачи проверки по http, но на моих ВМ долго стартует
  
 Определяю переменные для роли:
 ```bash
@@ -1487,8 +1684,8 @@ nano roles/gitlab_server/defaults/main.yml
 ```yml
 gitlab_version: "17.9.3-ce.0"
 
-gitlab_hostname: "gitlab-server.lan"
-gitlab_external_url: "http://gitlab-server.lan"
+gitlab_hostname: "local-gitlab.lan"
+gitlab_external_url: "http://local-gitlab.lan"
 
 gitlab_ssh_port: 2222
 gitlab_http_port: 80
@@ -1502,7 +1699,7 @@ gitlab_logs_dir: "{{ gitlab_base_dir }}/logs"
 gitlab_data_dir: "{{ gitlab_base_dir }}/data"
 gitlab_backups_dir: "{{ gitlab_data_dir }}/backups"
 ```
-
+ 
 Создаю шаблон
 ```bash
 nano roles/gitlab_server/templates/docker-compose.yml.j2
@@ -1531,7 +1728,7 @@ services:
       - '{{ gitlab_config_dir }}:/etc/gitlab'
       - '{{ gitlab_logs_dir }}:/var/log/gitlab'
       - '{{ gitlab_data_dir }}:/var/opt/gitlab'
-      - '{{ gitlab_backups_dir }}:/var/opt/gitlab/backups
+      - '{{ gitlab_backups_dir }}:/var/opt/gitlab/backups'
     shm_size: '256m'
 ```
 
@@ -1569,13 +1766,13 @@ ansible-playbook -i inventory.ini playbook.yml --ask-become-pass -v --tags gitla
  
 Получаю токен для **Instance Runner** (чтобы он был доступен для всех проектов в GitLab и не был привязан к какому-то конкретному репозиторию).
  
-1. Перехожу в интерфейс гитлаба: http://gitlab-server.lan/admin/runners
+1. Перехожу в интерфейс гитлаба: http://local-gitlab.lan/admin/runners
 2. Settings → CI/CD → Runners
 3. Жму `New Instance Runner`
 4. Заполняю:
 ![alt text](image-175.png)
 5. Жму кнопку Create Runner, которая раньше меня смущала своим названием
-> Как я понимаю, мы в интерфейсе гитлаба создаем описание раннера, гиталб под него создает "пустой слот",  выдает нам данные для регистрации раннера, мы раннер регистрируем с помощью gitlab-runner register, зареганный раннер подключается с нужным токеном, и после подключения раннер активируется и привязывается к этому слоту
+> Как я понимаю, мы в интерфейсе гитлаба создаем описание раннера, гитлаб под него создает "пустой слот",  выдает нам данные для регистрации раннера, мы раннер регистрируем с помощью gitlab-runner register, зареганный раннер подключается с нужным токеном, и после подключения раннер активируется и привязывается к этому слоту
 6. Беру токен и несу в переменные - `glrt-t1_1txE2igLA_mE452T_EnJ`
 ![alt text](image-176.png)
  
@@ -1612,7 +1809,7 @@ nano roles/gitlab_runner/tasks/main.yml
       - /var/run/docker.sock:/var/run/docker.sock
       - "{{ gitlab_runner_config_path }}:/etc/gitlab-runner"
     etc_hosts:
-      gitlab-server.lan: "{{ hostvars['gitlab-server']['ansible_host'] }}"
+      local-gitlab.lan: "{{ gitlab_ip }}"
 
 - name: Регистрация gitlab-runner
   community.docker.docker_container_exec:
@@ -1657,15 +1854,18 @@ nano roles/gitlab_runner/defaults/main.yml
  
 Вставляю:
 ```yml
+gitlab_host: "local-gitlab.lan"
+gitlab_ip: "172.20.10.8"
+
 gitlab_runner_config_path: "/srv/gitlab-runner/config"
 gitlab_runner_token: "glrt-t1_1txE2igLA_mE452T_EnJ"  # надо менять
-gitlab_runner_url: "http://gitlab-server.lan"
+gitlab_runner_url: "http://{{ gitlab_host }}"
 gitlab_runner_description: "docker-runner"
 gitlab_runner_tags: "docker"
 gitlab_runner_executor: "docker"
 gitlab_runner_image: "alpine:latest"
 gitlab_runner_add_host:
-  - "gitlab-server.lan:{{ hostvars['gitlab-server']['ansible_host'] }}"
+  - "{{ gitlab_host }}:{{ hostvars['gitlab-server']['ansible_host'] }}"
 ```
 > * При первом прохождении делала докер вольюм (`sudo docker volume create gitlab-runner-config`). Юра писал, что с каталогами проще, а /srv/gitlab-runner/config было в примерах в доке, поэтому взяла такую директорию
 > * Про `{{ hostvars['gitlab-server']['ansible_host'] }}` - вроде удобно, если только 3 контейнера развернуть. Но если масштабировать, наверное, удобнее прописать вручную адрес. Пока так оставила
@@ -1684,17 +1884,17 @@ ansible-playbook -i inventory.ini playbook.yml --ask-become-pass -v --tags gitla
  
 Работаю с всл, с нее же проверяю подключение:
 ```bash
- ssh -T -p 2222 git@gitlab-server.lan
+ssh -T -p 2222 git@local-gitlab.lan
 ```
 > * -p 2222 - потому что ранее пробрасывали его вместо 22
  
 Как обычно, если не просят пароль, значит все хорошо:
-![alt text](image-178.png)
+![alt text](image-196.png)
   
 Клонирую проект по SSH
 ```bash
 cd /home/kaya/repos/from_local_gitlab
-git clone ssh://git@gitlab-server.lan:2222/root/test-project-1.git
+git clone ssh://git@local-gitlab.lan:2222/root/test-project-1.git
 ```
 > Тут погуглила, что SSH-ссылки бывают в короткой и длинной форме.
 > По умолчанию - короткая.
@@ -1729,7 +1929,7 @@ echo_ok_job:
  
 Проверяю название ветки:
 ```bash
-git branch
+git branch --show-current
 ```
 Никакое, потому что при создании репозитория я сняла галочку с создания ридми, и репозиторий оказался пустой:
  
@@ -1746,8 +1946,11 @@ git push -u origin main
 Проверяю в UI гитлаба, что все в порядке:
 Project → Build → Pipelines:
 ![alt text](image-70.png)
-> Первый не появлялся минуту-две, и я запустила второй (без указания тега докер). Когда зашла првоерить, поняла, что все просто тормозит, но работает
+> Первый не появлялся минуту-две, и я запустила второй (без указания тега докер). Когда зашла проверить, поняла, что все просто тормозит, но работает
 ![alt text](image-180.png)
+
+> Во второй раз (когда добавила nginx) с новым url тоже все ок:
+![alt text](image-197.png)
  
 ### 2.2.11. Роль для установки docker_registry
 #### 2.2.11.1. Создаю роль
@@ -1762,27 +1965,21 @@ nano roles/docker_registry/tasks/main.yml
 ```
  
 Вставляю
+ 
 ```yml
-- name: Подготовка к установке docker registry
-  when: inventory_hostname == "docker-registry"
-  block:
-  - name: Установка pip на редхат
-    dnf:
-      name: python3-pip
-      state: present
-    when: ansible_os_family == "RedHat"
-
-  - name: Установка библиотек docker и requests
-    pip:
-      name:
-        - docker
-        - requests
-
+# роль под установку на альмалинукс
 - name: Установка docker registry
   when: inventory_hostname == "docker-registry"
   block:
+# при последующем прохождении проверить, что это ставится в бутстрап плейбуке, и убрать отсюда
+  - name: Установка библиотек docker и requests
+    ansible.builtin.pip:
+     name:
+       - docker
+       - requests
+
   - name: Создание каталога под докер вольюм
-    file:
+    ansible.builtin.file:
       path: "{{ registry_data_dir }}"
       state: directory
       owner: root
@@ -1801,19 +1998,21 @@ nano roles/docker_registry/tasks/main.yml
       ports:
         - 5000:5000
 
-  - name: Открываю порт 5000 в редхат
-    firewalld:
-      port: 5000/tcp
-      permanent: yes
-      state: enabled
-      immediate: yes
-    when: ansible_os_family == "RedHat"
+  - name: Открываю порт 5000
+    ansible.builtin.command: firewall-cmd --permanent --add-port=5000/tcp
+    become: true
+    register: firewalld_open_port
+    changed_when: "'success' in firewalld_open_port.stdout or 'already' in firewalld_open_port.stdout"
+
+  - name: Применяю изменения firewalld 
+    ansible.builtin.command: firewall-cmd --reload
+    become: true
 
 - name: Проверка доступности docker registry
   when: inventory_hostname == "gitlab-runner"
   block:
     - name: Проверка сервера с гитлаб-раннер
-      uri:
+      ansible.builtin.uri:
         url: "http://{{ hostvars['docker-registry']['ansible_host'] }}:5000/v2/_catalog"
         status_code: 200
         return_content: yes
@@ -1823,11 +2022,14 @@ nano roles/docker_registry/tasks/main.yml
       until: registry_check.status == 200
 
     - name: Вывод ответа
-      debug:
+      ansible.builtin.debug:
         var: registry_check.content
 ```
+> * После этой роли сменила в основном плейбуке `hosts` с `docker-registry` на `all`, чтобы была внешняя проверка подключения с гитлаб раннера
+> * Подписала, что роль под редхат на случай, если потом под регистри будет выделен сервер с дебиан, чтобы сразу дописать развилку на выбор ОС
+> * Библиотеку `docker` и `requests` ставлю, потому что требуется в задаче "Запуск контейнера registry". Т.к. сейчас установка модулей питона у меня идет через `raw`, то просто дописать в bootstrap плейбук эти модули и прогнать его заново я не могу, т.к. проверка выполнения задач там ручная. Поэтому прописала комментариями, что при последующем прогоне, если такой будет, там добавить модули, а здесь задачку убрать. Она, конечно, повторно не выполнится, но для чистоты.
+> * Про открытие порта 5000. Нашла модуль `ansible.posix.firewalld`, но он работает только, если на целевом хосте стоит библиотека `firewall`. Эта библиотека, как я узнала, - питон-биндинг для работы с сервисом firewalld через D-Bus в Linux. Т.к. firewalld — это системный сервис, а библиотека firewall в том числе зависит от зависит от системных C-библиотек и D-Bus API, то она поставляется как rpm-пакет. Сами rpm-пакеты собираются именно под системные версии питона. Для Альмы - это 3.6 или 3.9. У меня изначально питон не стоял на сервере, а при установке 3.6 возникли проблемы с использованием части модулей ансибл, поэтому я в бутстрап-плейбуке ставила питон 3.11. Соответственно, сейчас мне либо параллельно поставить питон 3.6, и прописать в задаче явное его использование, либо выполнить открытие порта через command. Я пошла по второму пути
  
-  
 Определяю переменные для роли:
 ```bash
 nano roles/docker_registry/defaults/main.yml
@@ -1844,7 +2046,6 @@ nano roles/docker_registry/defaults/main.yml
 registry_data_dir: "/srv/registry/data"
 docker_data_dir: "/etc/docker"
 ```
-> *  После этой роли сменила в основном плейбуке hosts с docker-registry на all, ччобы была внешняя проверка подключения
  
 #### 2.2.10.2. Тестирую роль для docker_registry
  
@@ -1854,5 +2055,367 @@ ansible-playbook -i inventory.ini playbook.yml --ask-become-pass -v --tags docke
 ```
  
 По тестам все ок:
-![alt text](image-192.png)
+![alt text](image-200.png)
+ 
+## Этап 3. Бекап/восстановление гитлаб сервера
+> Суть: Вводится дополнительный сервер с такой же конфигурацией. Производится перенос гитлаба с первого сервера на новый. После отключение (без удаления!!!) первого сервера. После всех работ стенд должен остаться рабочим.
+>
+> На выходе описание действий и возникшие проблемы.
+
+### Возникшие проблемы
+Друзья, я не знала, что такое бэкап и рестор и чем они отличаются от миграции, поэтому перед вами решение, как мигрировать на другой сервер
+![alt text](image-193.png)
+ 
+В общем да, мне не хватило контекста. Я думала, что создать сервер с такой же конфигурацией не относится к части ip и hostname, поэтому создала похожую ВМ с отличающимися данными. И при чтении доки часть про то, что конфиги не сохраняются при бэкапе навела меня на мысль о том, что раз сервер новый, надо и конфиги менять:
+![alt text](image-194.png)
+ 
+И в общем туда-сюда, я начала делать миграцию. Сейчас я поняла, что если только бэкап-рестор, значит мы по заданию не меняем ip и hostname, чтобы ничего не сломалось. 
+ 
+Про миграцию: нашла узкое место в том, что в конфигах у меня везде было прописано `gitlab-server.lan`. Поэтому проще было бы правда создать сервер точь в точь. В общем, я еще сделала на отдельной ВМ nginx под гитлаб, чтобы везде в конфигах прописать один адрес для обоих серверов. По ходу решения сделала я это на этом этапе, а потом все прогнала заново. Но саму часть с описанием того, что делала вставила повыше, чтобы было понятнее, если открою когда-нибудь совсем потом. 
+
+
+### 3.1. Подготовка нового сервера
+#### Создание ВМ
+Шаги такие же, как в "1.1. Настройка GitLab сервер (almalinux)", только при установке ОС пара моментов:
+1. `hostname` - `gitlab-server2.lan`
+2. Адрес сразу пишу нужный, т.к. в ансибл роли по настройке сервера статическим делается уже выданный машине адрес:
+![alt text](image-191.png)
+
+После установки также проверяю, что SSH стоит:
+```bash
+sudo systemctl status sshd
+```
+ 
+Проверяю адрес машины
+```bash
+ip addr
+```
+ 
+Проверяю хостнейм:
+```bash
+hostname
+```
+  
+Запись в `/etc/hosts` пока не делаю.
+ 
+На хосте с Windows настраиваю hosts:
+1. Пуск → Поиск → Блокнот → ПКМ → Запуск от имени администратора
+2. В блокноте открываю путь `C:\Windows\System32\drivers\etc\`
+3. Выбираю тип файла "Все файлы"
+4. Из появившегося списка выбираю `hosts`
+5. Вставляю:
+```bash
+172.20.10.6    gitlab-server2.lan
+```
+6. Сохраняю
+ 
+#### Изменение ансибл плейбуков/ролей, чтобы настроить сервер и рассказать другим ВМ о нем
+На машине с ансибл копирую публичный ключ на новый сервер:
+```bash
+ssh-copy-id kaya@172.20.10.6
+```
+ 
+Затем редактирую инвентарь
+```bash
+nano inventory.ini
+```
+ 
+Дальше подготовка к прогону бутстрап роли, что настроить новую ВМ+прописать на другие строчку с ней в /etc/hosts.
+ 
+Добавляю новый сервер в инвентарь:
+```bash
+[servers_on_almalinux]
+gitlab-server ansible_host=172.20.10.3
+gitlab-server2 ansible_host=172.20.10.6
+docker-registry ansible_host=172.20.10.4
+
+[servers_on_debian]
+gitlab-runner ansible_host=172.20.10.2
+
+[all:vars]
+ansible_user=kaya
+ansible_ssh_private_key_file=/home/kaya/.ssh/id_rsa
+ansible_python_interpreter=/usr/bin/python3.11
+```
+ 
+Редактирую переменные для бутстрап плейбука:
+```bash
+nano group_vars/all.yml
+```
+ 
+Добавляю данные для нового сервера:
+```bash
+  gitlab-server2:
+    fqdn: gitlab-server2.lan
+    hostname: gitlab-server
+    address: 172.20.10.6
+```
+ 
+В сам бутстрап-плейбук:
+```bash
+nano bootstrap-playbook.yml
+```
+
+Добавляю проверку доступности нового имени:
+```bash
+    - name: Проверка доступности gitlab-server2.lan
+      ansible.builtin.command: getent hosts gitlab-server2.lan
+      register: dns_check_gitlab_server2
+      changed_when: false
+```
+
+И чек:
+```bash
+    - name: Дебаг - Проверка резолвинга имён
+      debug:
+        msg: |
+          gitlab-server: {{ dns_check_gitlab.stdout }}
+          docker-registry: {{ dns_check_registry.stdout }}
+          gitlab-runner: {{ dns_check_runner.stdout }}
+          gitlab-proxy: {{ dns_check_local_gitlab.stdout }}
+          gitlab-server2: {{ dns_check_gitlab_server2.stdout }}
+```
+ 
+Запускаю:
+```bash
+ansible-playbook -i inventory.ini bootstrap-playbook.yml --ask-become-pass
+```
+ 
+Все ок:
+ 
+![alt text](image-201.png)
+ 
+Запускаю `common` роль для настройки нового сервера и ставлю докер:
+```bash
+ansible-playbook -i inventory.ini playbook.yml --ask-become-pass -v --tags common,docker --limit gitlab-server2
+```
+![alt text](image-202.png)
+ 
+### 3.3. Миграция
+Как я поняла, при миграции план такой:
+1. Поднять новый гитлаб-сервер на новом сервере, чтобы он корректно создал все, что ему нужно 
+2. Остановить поднятый гитлаб (чтобы безопасно подложить новые конфиги) 
+3. Уже тут можно предупредить пользователей текущего гитлаба, и сделать так, чтобы они не вносили изменения
+4. Создать бэкап средствами гитлаба + проверить, что все ок, мы его видим
+5. Остановить старый гитлаб (без удаления)
+6. Перенести бэкап на новый сервер
+7. Перенести текущие конфиги на новый сервер
+8. На новом сервере запустить гитлаб + сделать reconfigure
+9. Остановить сервисы, который могут работать с БД - puma, sidekiq и еще cron
+10. Убедиться через статус сервисов, что они точно остановлены
+11. Запустить рестор
+12. Рестартануть контейнер гитлаба, дождаться статуса `Up (Healthy)`
+13. Убедиться, что все ок с помощью `docker exec -it gitlab gitlab-rake gitlab:check SANITIZE=true`
+14. Проверить ручками, что все ок. Я проверила проект и пайплайн, но думаю, надо еще доступы, тестовый ci-cd итд
+15. Если используем прокси - перенастроить
+
+> Возникшие проблемы: не сразу поняла, что нужно делать и сталкивалась с ошибками. Думала, что можно подсунуть новые конфиги до первого старта гитлаба - получала ошибки создания БД и ошибки прав (сперва переносила конфиги не rsync, а scp). Не сразу поняла, какой должен быть корректный порядок действий. 
+
+#### Разворачиваю гитлаб на новом сервере
+В плейбуке меняю роль для установки гитлаб сервера (добавляю хост, по идее лучше в инвентори задать, но пока их два, это лишнее вроде как)
+```yml
+- name: Поднимаем гитлаб-сервер в докер-контейнере 
+  hosts: gitlab-server, gitlab-server2
+  become: true
+  roles:
+    - role: gitlab_server
+      tags: gitlab_server
+```
+ 
+Запускаю плейбук только для установки гитлаб-сервера на новом узле:
+```bash
+ansible-playbook -i inventory.ini playbook.yml --ask-become-pass -v --tags gitlab_server --limit gitlab-server2
+```
+ 
+В браузере смотрю, что гитлаб поднялся:
+http://gitlab-server2.lan
+ 
+И в консоли:
+```bash
+ssh -T -p 2222 git@gitlab-server2.lan
+```
+![alt text](image-187.png)
+ 
+#### Сама миграция (бэкап+рестор+конфиги)
+
+##### Шаги на обоих серверах
+ 
+Ставлю rsync, потому что у меня его нет:
+```bash
+sudo dnf install rsync -y
+```
+
+##### Шаги на новом сервере
+ 
+Останавливаю поднятый гитлаб-сервер, чтобы без проблем подсунуть новые данные (конфиги и бэкап):
+```bash
+cd /srv/gitlab
+docker compose down
+```
+
+##### Шаги на старом сервере по подготовке к миграции
+ 
+По идее, если бы были пользователи, то сообщить о миграции и
+* либо убрать сервер из nginx, чтобы он временно был недоступен (чтобы не появилось новых изменений, не вошедших в бэкап)
+* либо вроде есть специальная опция на платном гитлабе (Maintenance mode)
+ 
+Дальше делаю сам бэкап:
+```bash
+docker exec -t gitlab gitlab-backup create
+```
+ 
+Проверяю, что есть:
+```bash
+cd /srv/gitlab/data/backups/ && ll
+```
+ 
+![alt text](image-203.png)
+ 
+Останавливаю гитлаб-сервер:
+```bash
+cd /srv/gitlab
+docker compose down
+```
+ 
+Переношу бэкап на новый сервер
+```bash
+rsync -avz /srv/gitlab/data/backups/ root@172.20.10.6:/srv/gitlab/data/backups/
+```
+ 
+Переношу конфиги на новый сервер
+```bash
+rsync -avz /srv/gitlab/config/ root@172.20.10.6:/srv/gitlab/config/
+# rsync -avz /srv/gitlab/logs/ root@172.20.10.6:/srv/gitlab/logs/
+```
+> Вроде логи не нужны при миграции. Но мало ли понадобятся. Поэтому оставила как опициональную команду
+ 
+##### Шаги на новом сервере - сама миграция
+ 
+Запускаю гитлаб-сервер:
+```bash
+cd /srv/gitlab
+docker compose up -d
+```
+ 
+Применяю новую конфигурацию для гитлаба (у меня заняло около 5 минут)
+```bash
+docker exec -it gitlab gitlab-ctl reconfigure
+```
+![alt text](image-204.png)
+ 
+Останавливаю процессы, подключеннык к БД: 
+```bash
+docker exec -it gitlab gitlab-ctl stop puma
+docker exec -it gitlab gitlab-ctl stop sidekiq
+docker exec -it gitlab gitlab-ctl stop cron
+```
+
+Проверяю, что процессы остановились, перед тем, как продолжить:
+```bash
+docker exec -it gitlab gitlab-ctl status
+```
+ 
+![alt text](image-205.png)
+
+Запускаю рестор, убрав из имени бэкапа "_gitlab_backup.tar":
+```bash
+docker exec -it gitlab gitlab-backup restore BACKUP=1751195301_2025_06_29_17.9.3
+```
+ 
+При ресторе были такие уведомления:
+```bash
+ERROR:  must be owner of extension pg_trgm
+ERROR:  must be owner of extension btree_gist
+ERROR:  must be owner of extension btree_gist
+ERROR:  must be owner of extension pg_trgm
+```
+> Как я поняла эти ошибки некритичны, если они были только при попытке повторно создать уже существующие extensions, а сам restore продолжится.
+> Наверняка узнать можно командой `docker exec -it gitlab gitlab-rake gitlab:check SANITIZE=true`. Если с БД все хорошо, то команда отработает без ошибок
+ 
+Рестартую контейнер (в оф. инструкции `docker restart`, но я запускала через компоуз):
+```bash
+docker compose restart gitlab
+```
+ 
+Дожидаюсь, что он в статусе `up healthy`
+```bash
+docker ps -a
+```
+> * Кстати, сперва у меня был в статусе `up (unhealthy)`, я выполнила команду ниже в поисках ошибок, она отработала без ошибок, я проверила статус контейнера, он был в порядке - `up (healthy)`
+ 
+Проверяю гитлаб:
+```bash
+docker exec -it gitlab gitlab-rake gitlab:check SANITIZE=true
+```
+ 
+Вывод:
+![alt text](image-206.png)
+![alt text](image-207.png)
+ 
+Проверяю в браузере, что работает (сперва попросил представиться, а потом показал, что все перенеслось 🥹)
+![alt text](image-208.png)
+ 
+#### Обновление прокси
+ 
+Подключаюсь к серверу с прокси:
+```bash
+ssh kaya@172.20.10.8
+sudo su -
+```
+
+В конфиге nginx меняю адрес гитлаба для http:
+```bash
+sudo nano /etc/nginx/sites-available/gitlab-proxy.conf
+```
+ 
+(Комментирую / расскоментирую)
+```
+upstream gitlab-backend {
+    #server 172.20.10.3:80;  
+    server 172.20.10.6:80;  
+}
+...
+```
+  
+И также меняю адрес для ssh:
+```bash
+sudo nano /etc/nginx/gitlab-stream.conf
+```
+ 
+(Комментирую / расскоментирую)
+```
+stream {
+    upstream gitlab-ssh {
+        # server 172.20.10.3:2222;  
+         server 172.20.10.6:2222;
+    }
+
+    server {
+        listen 2222;
+        proxy_pass gitlab-ssh;
+    }
+}
+```
+
+Проверяю конфиги на ошибки:
+```bash
+sudo nginx -t
+```
+
+Перезапускаю nginx:
+```bash
+sudo systemctl restart nginx
+```
+ 
+Проверяю, что работает:
+```bash
+sudo systemctl status nginx 
+```
+
+и в браузере:
+ 
+![alt text](image-209.png)
+
+
+
  
