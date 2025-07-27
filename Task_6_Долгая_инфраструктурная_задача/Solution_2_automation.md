@@ -2867,7 +2867,7 @@ scrape_configs:
       - targets: ['localhost:9090']
 
   - job_name: gitlab-server
-    metrics_path: '/-/metrics'
+    metrics_path: '/metrics'
     static_configs:
       - targets: ['local-gitlab.lan:80']
 
@@ -2949,7 +2949,8 @@ sudo chmod -R 0755 /srv/prometheus_data
 ```
 
 **1. Гитлаб сервер**
- 
+  <details>
+  <summary><b>Способ 1 (неправильный). Под спойлером рассказ о том, как я сделала в первый раз и ошиблась (получила ошибку 404 в прометее)</b></summary>
 Как я поняла, в гитлаб-сервере Prometheus endpoint встроен в само веб-приложение GitLab. И этот endpoint доступен по тому же порту, что и веб-интерфейс гитлаба. У меня он на порту 80. Сам путь к метрикам - `/-/metrics`.
  
 То есть сперва будет достаточно подключиться внутрь контейнера и проверить, есть ли метрики:
@@ -2971,8 +2972,161 @@ curl http://localhost/-/metrics
       - targets: ['local-gitlab.lan:80']
 ```
  
-Порт наружу не открываю, 80 уже итак открыт.
+Порт наружу не открываю, 80 уже итак открыт. </details>
+
  
+**Способ 2 (правильный)**
+ 
+Привет! Тут я переобуваюсь.
+Узнала:
+То, что я пыталась открыть на http://local-gitlab.lan:80/-/metrics, — это путь встроенного Prometheus-эндпоинта GitLab Workhorse. Он доступен только изнутри контейнера по localhost и не предназначен для внешнего мониторинга.
+Внутри он работал, а снаружи (в том же интерфейсе Прометея) у меня было 404.
+ 
+По итогу, выяснила, что у гитлаба 2 типа эндпоинта для метрик (по крайней мере, минимум):
+* `http://ip_address:80/-/metrics` (эндпоинт веб-приложения GitLab (Puma/Workhorse)) 
+  * собирает базовые метрики: HTTP/статистика (респонсы, ошибки)
+  * доступен только изнутри контейнера (localhost).
+  * не предназначен для Prometheus-мониторинга GitLab в целом.
+
+* `http://ip_address:9168/metrics` (полноценный gitlab-exporter)
+  * собирает все, что нужно Прометею (CI пайплайны, очереди Sidekiq, проекты, пользователи, API, Redis, Git итд)
+  * можно пробросить наружу, используется в прод
+  * включается в gitlab.rb
+ 
+Поэтому исправляю
+ 
+Останавливаю гитлаб-сервер:
+```bash
+cd /srv/gitlab
+docker compose down
+```
+ 
+В конфиге гитлаба открываю сбор метрик (`vim /srv/gitlab/config/gitlab.rb`)/
+ 
+Было:
+ 
+![alt text](image-238.png)
+ 
+Стало:
+ 
+![alt text](image-240.png)
+ 
+p.s. если не раскомментировать строку `gitlab_exporter['listen_address']` и не заменить значение на `'0.0.0.0'`, то снаружи не подключимся к эндпоинту
+
+Меняю ямл:
+```bash
+nano docker-compose.yml
+```
+ 
+Прокидываю порт для метрик:
+```yaml
+- '9168:9168'
+```
+ 
+Поднимаю гитлаб-сервер заново:
+```bash
+cd /srv/gitlab
+docker compose up -d
+```
+ 
+Делаю реконфиг для контейнера:
+```bash
+docker exec -it gitlab /bin/bash
+gitlab-ctl reconfigure
+```
+p.s. как поняла, без `gitlab-ctl reconfigure`, не применятся настройки
+
+##### Обновление прокси
+ 
+Т.к. я настраивала прокси (суть которого была в том, чтобы у гитлаб-сервера был единый адрес вне зависимости от ip сервера), то мне надо прописать отдельный url для метрик. Ниже я обновляю конфиг nginx-прокси так, чтобы запросы по пути `/metrics` шли на порт `9168` гитлаб-сервера, при этом внешний адрес `local-gitlab.lan` остается прежним - так Прометей будет обращаться по знакомому URL, а реальный сервер можно менять "под капотом".
+ 
+Подключаюсь к серверу с прокси:
+```bash
+ssh kaya@172.20.10.8
+sudo su -
+```
+
+Открываю для редактирования конфиг nginx:
+```bash
+sudo nano /etc/nginx/sites-available/gitlab-proxy.conf
+```
+ 
+Добавляю строки для `gitlab-exporter`, привожу к такому вижу:
+```
+upstream gitlab-backend {
+    # server 172.20.10.3:80;
+     server 172.20.10.6:80;
+}
+
+upstream gitlab-exporter {
+    # server 172.20.10.3:9168;
+    server 172.20.10.6:9168;
+}
+
+server {
+    listen 80;
+    server_name local-gitlab.lan;
+
+    location / {
+        proxy_pass http://gitlab-backend;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    location /metrics {
+        proxy_pass http://gitlab-exporter;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+}
+```
+p.s. у меня здесь основной адрес для метрик выходит `http://local-gitlab.lan/metrics`. Не забыть потом
+ 
+Проверяю конфиги на ошибки:
+```bash
+sudo nginx -t
+```
+ 
+Перезапускаю nginx:
+```bash
+sudo systemctl restart nginx
+```
+ 
+Проверяю, что работает:
+```bash
+sudo systemctl status nginx 
+```
+ 
+В браузере есть метрики:
+![alt text](image-241.png)
+ 
+Добавляю записи в конфиг прометея:
+```yaml
+  - job_name: gitlab-server
+    metrics_path: '/metrics'
+    static_configs:
+      - targets: ['local-gitlab.lan:80']
+```
+ 
+В моем случае не добавляю, а меняю старые, т.к. в первый раз внесла неправильные, поэтому порядок такой - подключиться, обновить строчки, рестартануть контейнеры:
+```bash
+ssh kaya@172.20.208
+sudo su - 
+cd ~/prometheus-docker/
+nano prometheus.yml
+// меняю строчки и сохраняю
+docker compose down
+docker compose up -d
+```
+ 
+Ура, работает:
+![alt text](image-242.png)
+ 
+
 **2. Гитлаб Раннер**
  
 Как я поняла, у оф. образа гитлаб раннера тоже есть Prometheus endpoint. Но по умолчанию гитлаб-раннер не запускает Prometheus metrics endpoint. Поэтому нет смысла сейчас проверять, наличие метрик в контейнере. Чтобы включить endpoint, нужно явно указать это в конфиге раннера с помощью параметра `listen_address`. В документации приводят порт `9252`.
