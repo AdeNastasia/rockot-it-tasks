@@ -1439,7 +1439,7 @@ nano roles/docker/templates/daemon.json.j2
 Вставляю:
 ```json
 {
-  "insecure-registries": ["{{ hostvars[inventory_hostname]['ansible_fqdn'] }}:5000"]
+  "insecure-registries": ["{{ docker-registry.lan:5000"]
 }
 ```
  
@@ -2627,6 +2627,13 @@ systemctl enable zabbix-server zabbix-agent nginx php8.3-fpm
  
 И вот:
 ![alt text](image-219.png)
+
+И еще кое-что.
+1. В интерфейсе заббикса: Users -> Users -> Admin меняю пароль для администратора
+  ![alt text](image-272.png)
+2. В интерфейсе заббикса: Administartion -> General -> GUI меняю время на актуальное (+3 UTC)
+3. Там же указываю рабочее время сервера заббикс как круглосуточное (по умолчанию он в графике 5/2):
+  ![alt text](image-266.png)
  
 ### Установка Zabbix agent
 На ВМ с Альмалинукс (2 гитлаб-сервера + докер регистри) ставлю по инструкции - https://www.zabbix.com/download?zabbix=7.4&os_distribution=alma_linux&os_version=8&components=agent&db=&ws=
@@ -3157,7 +3164,8 @@ docker run -d \
   --restart always \
   gitlab/gitlab-runner:latest
 ```
-
+* Вот тут ошибка. Я указала адрес `172.20.10.3', а это адрес моей ВМ, где я впервые устанавливала гитлаб-сервер. Далее я ввела реверс-прокси, и надо было указывать его адрес - 172.20.10.8 (позже исправлю)
+ 
 Теперь можно проверить метрики с хоста:
 ```bash
 curl  http://localhost:9252/metrics
@@ -3192,9 +3200,106 @@ sudo netfilter-persistent save
 
 **3. Докер регистри**
  
-Как я поняла, классический оф. образ докер регистри не имеет полноценного Prometheus endpoint без сборки с build-tag prometheus.
+~~Как я поняла, классический оф. образ докер регистри не имеет полноценного Prometheus endpoint без сборки с build-tag prometheus. Вроде как либо собирать кастомный, либо пробовать Harbor. Как будто кажется, что это не тот сервис, который нужно прямо мониторить, и тут важнее мониторин самого сервера. Но не знаю, как на практике. Юююрааа, я что-то не досмотрела? 🙄🙄🙄~~
  
-Вроде как либо собирать кастомный, либо пробовать Harbor. Как будто кажется, что это не тот сервис, который нужно прямо мониторить, и тут важнее мониторин самого сервера. Но не знаю, как на практике. Юююрааа, я что-то не досмотрела? 🙄🙄🙄
+Переобуваюсь. Все нашла. Итак, настройка.
+ 
+Копирую конфиг из контейнера на хост:
+```bash
+sudo mkdir -p /etc/docker/registry 
+ 
+docker cp registry:/etc/docker/registry/config.yml /etc/docker/registry/config.yml
+```
+ 
+Редактирую конфиг докер-регистри:
+```bash
+nano /etc/docker/registry/config.yml
+```
+ 
+Добавляю блок метрик в блок http, чтобы получилось так:
+```
+version: 0.1
+log:
+  fields:
+    service: registry
+storage:
+  cache:
+    blobdescriptor: inmemory
+  filesystem:
+    rootdirectory: /var/lib/registry
+http:
+  addr: :5000
+  headers:
+    X-Content-Type-Options: [nosniff]
+  debug:
+    addr: 0.0.0.0:5001
+    prometheus:
+      enabled: true
+      path: /metrics
+
+health:
+  storagedriver:
+    enabled: true
+    interval: 10s
+    threshold: 3
+```
+ 
+Останавливаю и удаляю контейнер (данные пока в старом томе):
+```bash
+docker stop registry
+docker rm registry
+```
+ 
+Создаю новый каталог на хосте:
+```bash
+sudo mkdir -p /srv/registry
+```
+ 
+Запускаю контейнер:
+```bash
+docker run -d --name registry --restart always \
+  -p 5000:5000 \
+  -p 5001:5001 \
+  -v /srv/registry:/var/lib/registry \
+  -v /etc/docker/registry/config.yml:/etc/docker/registry/config.yml:ro \
+  registry:2
+```
+ 
+Открываю порт в firewalld:
+```bash
+sudo firewall-cmd --permanent --add-port=5001/tcp
+sudo firewall-cmd --reload
+```
+ 
+Проверяю, в браузере, есть ли метрики по адресу http://docker-registry.lan:5001/metrics
+![alt text](image-263.png)
+
+Далее настраиваю Прометеус. Открываю конфиг прометеуса на машине с убунту
+```bash
+nano ~/prometheus-docker/prometheus.yml
+```
+
+И вставляю:
+```bash
+scrape_configs:
+  - job_name: "docker-registry"
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["docker-registry.lan:5001"]
+```
+
+Перечитываю конфиг Prometheus
+```bash
+cd ~/prometheus-docker
+``` 
+ 
+```bash
+docker compose restart prometheus
+```
+ 
+Проверяю в UI: открываю http://172.20.10.8:9090 → Status → Targets → вижу docker-registry со статусом UP
+ 
+![alt text](image-264.png)
  
 > P.S. Для всех приложений нужно потом обновить плейбук ансибл, если надо все это автоматизировать (установка агента на новые хосты, создание конфигов, открытие портов итд)
 
@@ -3204,3 +3309,276 @@ sudo netfilter-persistent save
 ### Этап 5. Стресс тестирование стенда
 > Описание. Стресс тестирование стенда. Создаём проект, который забивает реестр. Вариант решения - добавлять в образ изменяемый файл, после него большой файл. 
 Следим по мониторингу как изменяются показатели сервисов/серверов.
+ 
+#### 5.1. Создать пайплайн для загрузки образа в локальный регистри
+Подключаюсь к гитлабу, создаю пустой проект под этап:
+![alt text](image-243.png)
+ 
+Клонирую к себе на WSL:
+```bash
+cd ~/local-repositories/from_local_gitlab
+```
+ 
+```bash
+git clone ssh://git@local-gitlab.lan:2222/root/stress-test.git
+```
+ 
+Я снова создала пустой репозиторий (даже без ридми), поэтому помню, что ветки у меня в нем нет (о чем скажет команда `git branch --show-current`), поэтому сразу создаю ветку:
+
+```bash
+git checkout -b main
+```
+ 
+Дальше пробовала разные подходы. Юра писал, что можно добавлять в образ изменяемый файл, после него большой файл.
+Итоговое решение такое:
+
+1. Создаю .gitlab-ci.yml, в котором два этапа - сборка образа; пуш образа.
+2. Создаю докерфайл, в котором будет минимальный образ + создание файла с рандомным бинарным содержимым, который будет способствовать росту количества образов в реестре.
+ 
+Создаю файл `.gitlab-ci.yml`, который будет вносить изменения:
+```bash
+nano .gitlab-ci.yml
+```
+ 
+Наполняю:
+```yaml
+image: docker:latest
+
+stages:
+  - build_and_push
+
+services:
+  - name: docker:dind
+    alias: docker
+    command:
+      - "--tls=false"
+      - "--insecure-registry=docker-registry.lan:5000"
+
+variables:
+  IMAGE_TAG: "docker-registry.lan:5000/stress/image-$CI_PIPELINE_ID"
+  DOCKER_TLS_CERTDIR: ""
+  DOCKER_HOST: "tcp://docker:2375"
+
+build-and-push-job:
+  stage: build_and_push
+  script:
+    - dd if=/dev/urandom of=bigfile.dat bs=1M count=2048
+    - docker build -t $IMAGE_TAG .
+    - docker push $IMAGE_TAG
+```
+ 
+Здесь
+* Для возможности запускать докер-команды в пайплайне делаю две штуки:
+  * использую контейнер с образом `docker:latest`, в котором есть только docker CLI, но нет самого демона докера
+  * использую сервис dind - `docker:dind`, чтобы внутри пайплайна можно было запускать команды докера
+* Использую переменные:
+  * Для разного именования образов задаю `IMAGE_TAG`, в которой использую внутреннюю переменную гитлаба - `$CI_PIPELINE_ID`, чтобы каждый пуш имел последовательный тег
+  * Задаю `DOCKER_TLS_CERTDIR: ""`, чтобы `docker:dind` мог подключаться без TLS-сертификатов
+  * Задаю `DOCKER_HOST`, чтобы docker CLI в контейнере джобы знал, по какому адресу подключаться к докер демону (своего-то нет) 
+* Пишу одну джобу на сборку и пуш (можно две, тогда надо между ними передавать артефакт)
+  * Сборка:
+    * Создать файл со случайными данными, размера 2 ГБ 
+    * Собрать докер-образ с тегом `$IMAGE_TAG`
+  * Пуш: 
+    * Отправка собранного образа в приватный докер регистри
+* Про данные авторизации в регистри.
+  * У меня докер-регистри без авторизации. Чтобы наверняка проверить, можно выполнить в командной строке `curl http://docker-registry.lan:5000/v2/`, если ответ `{}` (а у меня он), значит авторизации нет. Если бы была, то в пайплайне нужно было бы заполнить данные для логина + задать сами переменные (скорее всего, в настройках проекта).
+ 
+Рядом создаю докерфайл:
+```
+nano Dockerfile
+```
+ 
+Наполняю простым содержимым:
+```
+FROM alpine:latest
+COPY bigfile.dat /app/bigfile.dat
+```
+ 
+Сохраняю изменения и делаю пуш
+```bash
+git add .
+git commit -m "добавила .gitlab-ci.yml + Dockerfile"
+git push -u origin main
+```
+ 
+Смотрю статус пайлпайна в гитлаб интерфейсе:
+![alt text](image-268.png)
+ 
+Также проверяю через API, какие репозитории есть в Docker Registry и пополняется ли список: `http://docker-registry.lan:5000/v2/_catalog`
+![alt text](image-267.png)
+ 
+**Все ок. Немного о том, какие я тут встретила ошибки, и как решила**
+<details>
+<summary>Посмотреть</summary>
+ 
+1. **Проблема:** При первом запуске раннера встретилась с ошибкой:
+ 
+![alt text](image-248.png)
+ 
+Контейнер долго так висел.
+ 
+**Решение ->**  Логи докера показали, что соединение с CDN есть, но чтение данных обрывается по таймауту. Нашла, что проблема может быть в маршруте CDN. Добавила в `/etc/docker/daemon.json` DNS строчки:
+```
+  "dns": ["8.8.8.8", "1.1.1.1"],
+  "registry-mirrors": ["https://mirror.gcr.io"]
+```
+и перезпустила докер `sudo systemctl restart docker` - помогло
+
+2. **Проблема:** Я указала докер-сокет, а в пайплайне использовала dind, из-за чего получала ошибку. 
+ 
+**Решение ->** Убрала из конфига раннера строчку про сокет (вместо `volumes = ["/var/run/docker.sock:/var/run/docker.sock", "/cache"]` прописала `volumes = ["/cache"]`) и перезапустила его
+ 
+3. **Проблема:** Получила ошибку dns, т.к. в конфиге раннера ранее не прописывала адрес до регистри (ошибка ), 
+ 
+**Решение ->**  Прописала в конфиг раннера вместо extra_hosts = `["local-gitlab.lan:172.20.10.8"]` так `extra_hosts = ["local-gitlab.lan:172.20.10.8", "docker-registry.lan:172.20.10.4"]` и перезапустила его
+</details>
+ 
+#### 5.2. Преобразовать пайплайн, чтобы прям "забить" регистри
+У меня есть рабочее решение, которое надо зациклить.
+ 
+В локальном репо проекта открываю файл `.gitlab-ci.yml`:
+```bash
+nano .gitlab-ci.yml
+```
+ 
+Делаю цикл:
+```yaml
+image: docker:latest
+
+stages:
+  - build_and_push
+
+services:
+  - name: docker:dind
+    alias: docker
+    command:
+      - "--tls=false"
+      - "--insecure-registry=docker-registry.lan:5000"
+
+variables:
+  IMAGE_TAG: "docker-registry.lan:5000/stress/image-$CI_PIPELINE_ID"
+  DOCKER_TLS_CERTDIR: ""
+  DOCKER_HOST: "tcp://docker:2375"
+
+build-and-push-job:
+  stage: build_and_push
+  script: |
+    i=1
+    while :; do
+      TAG="${IMAGE_TAG}"
+      dd if=/dev/urandom of=bigfile.dat bs=1M count=2048
+      docker build -t "$TAG" .
+      docker push "$TAG"
+      echo "Образ запушен в $i раз"
+      i=$((i+1))
+    done
+```
+ 
+Пуш:
+```bash
+git add .
+git commit -m "добавила цикл в .gitlab-ci.yml"
+git push -u origin main
+```
+ 
+**Преобразование файлов.**
+Первый образ пушился долго. Как я поняла, если перенести генерацию случайного файла в Докерфайл, то процесс пойдет быстрее, так как гитлаб не будет работать с таким большим контекстом в 2 ГБ.
+
+Поэтоу я обновила Докерфайл:
+```
+FROM alpine:3.20
+
+# Размер файла в МБ
+ARG SIZE_MB=2048
+
+RUN mkdir -p /app \
+ && dd if=/dev/urandom of=/app/bigfile.dat bs=1M count=${SIZE_MB}
+```
+ 
+И обновила файл пайплайна:
+```yaml
+image: docker:latest
+
+stages:
+  - build_and_push
+
+services:
+  - name: docker:dind
+    alias: docker
+    command:
+      - "--tls=false"
+      - "--insecure-registry=docker-registry.lan:5000"
+
+variables:
+  IMAGE_TAG: "docker-registry.lan:5000/stress/image-$CI_PIPELINE_ID"
+  DOCKER_TLS_CERTDIR: ""
+  DOCKER_HOST: "tcp://docker:2375"
+
+build-and-push-job:
+  stage: build_and_push
+  script: |
+    i=1
+    while :; do
+      TAG="${IMAGE_TAG}"
+      docker build --no-cache \
+        --build-arg SIZE_MB=2048 \
+        -t "$TAG" .
+      docker push "$TAG"
+      echo "Образ запушен в $i раз: $TAG"
+      i=$((i+1))
+    done
+```
+ 
+Затем снова пуш в репозиторий.
+ 
+Итого: новый раннер с циклом работает, в реестре уже было два образа, успешно загрузился еще один. В Заббикс пришел алерт:
+![alt text](image-269.png)
+ 
+После этого пуши стали тормозить и срываться, раннер падает с ошибкой `HTTP 500 Internal Server Error` при пуше. Я подключилась к серверу с докер-регистри и проверила место командой:
+```bash
+df -h
+```
+ 
+Вывод:
+ 
+![alt text](image-270.png)
+ 
+Уточнила, что именно заняло место:
+```bash
+du -xh -d1 -x /srv
+du -xh -d1 -x /srv/registry/docker/registry/v2
+```
+Вывод:
+![alt text](image-271.png)
+ 
+Итого, 11 ГБ заняли слои образов. 
+ 
+**Ошибки/Решения.**
+ 
+По идее задание на случай, если диск не размечен. У меня хоть и размечен, но забился корень, что плохо. То есть при планировании инфры надо либо при разметке отдельно монтировать раздел `/srv`; либо же хранить данные для контейнера регистри в вольюме, который будет находиться в отдельно-смонтированном `/var`, а не в самом корне.
+ 
+Как быстроее решение вижу остановку контейнера и полное удаление содержимого `/srv/registry/*`. Но для тестового прогона - это ок, а для прода нет. Беру время осмотреться, какие еще есть варианты.
+
+
+ 
+
+
+
+
+
+
+
+
+
+
+--
+
+---
+Нужная метрика в заббиксе: monitoring -> hosts -> docker-registry -> triggers:
+![alt text](image-265.png)
+
+
+
+
+
