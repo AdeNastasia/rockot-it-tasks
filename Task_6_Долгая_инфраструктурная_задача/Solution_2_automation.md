@@ -3310,6 +3310,9 @@ docker compose restart prometheus
 > Описание. Стресс тестирование стенда. Создаём проект, который забивает реестр. Вариант решения - добавлять в образ изменяемый файл, после него большой файл. 
 Следим по мониторингу как изменяются показатели сервисов/серверов.
  
+> P.S. Так как мониторить буду занятое место, посмотрела, как эта метрика вообще выглядит в Заббиксе. Нужная метрика в интерфейсе Заббикса: monitoring -> hosts -> docker-registry -> triggers:
+> ![alt text](image-265.png)
+ 
 #### 5.1. Создать пайплайн для загрузки образа в локальный регистри
 Подключаюсь к гитлабу, создаю пустой проект под этап:
 ![alt text](image-243.png)
@@ -3332,8 +3335,19 @@ git checkout -b main
 Дальше пробовала разные подходы. Юра писал, что можно добавлять в образ изменяемый файл, после него большой файл.
 Итоговое решение такое:
 
-1. Создаю .gitlab-ci.yml, в котором два этапа - сборка образа; пуш образа.
-2. Создаю докерфайл, в котором будет минимальный образ + создание файла с рандомным бинарным содержимым, который будет способствовать росту количества образов в реестре.
+1. Создаю докерфайл, в котором будет минимальный образ + создание файла с рандомным бинарным содержимым, который будет способствовать росту количества образов в реестре.
+2. Создаю .gitlab-ci.yml, в котором два этапа - сборка образа; пуш образа.
+ 
+Создаю докерфайл:
+```
+FROM alpine:3.20
+
+# Размер файла в МБ
+ARG SIZE_MB=2048
+
+RUN mkdir -p /app \
+ && dd if=/dev/urandom of=/app/bigfile.dat bs=1M count=${SIZE_MB}
+```
  
 Создаю файл `.gitlab-ci.yml`, который будет вносить изменения:
 ```bash
@@ -3353,6 +3367,9 @@ services:
     command:
       - "--tls=false"
       - "--insecure-registry=docker-registry.lan:5000"
+      - "--registry-mirror=https://mirror.gcr.io"
+      - "--dns=8.8.8.8"
+      - "--dns=1.1.1.1"
 
 variables:
   IMAGE_TAG: "docker-registry.lan:5000/stress/image-$CI_PIPELINE_ID"
@@ -3362,7 +3379,6 @@ variables:
 build-and-push-job:
   stage: build_and_push
   script:
-    - dd if=/dev/urandom of=bigfile.dat bs=1M count=2048
     - docker build -t $IMAGE_TAG .
     - docker push $IMAGE_TAG
 ```
@@ -3376,29 +3392,21 @@ build-and-push-job:
   * Задаю `DOCKER_TLS_CERTDIR: ""`, чтобы `docker:dind` мог подключаться без TLS-сертификатов
   * Задаю `DOCKER_HOST`, чтобы docker CLI в контейнере джобы знал, по какому адресу подключаться к докер демону (своего-то нет) 
 * Пишу одну джобу на сборку и пуш (можно две, тогда надо между ними передавать артефакт)
-  * Сборка:
-    * Создать файл со случайными данными, размера 2 ГБ 
-    * Собрать докер-образ с тегом `$IMAGE_TAG`
-  * Пуш: 
-    * Отправка собранного образа в приватный докер регистри
+  * Сборка: Собрать докер-образ с тегом `$IMAGE_TAG`
+  * Пуш: Отправка собранного образа в приватный докер регистри
 * Про данные авторизации в регистри.
   * У меня докер-регистри без авторизации. Чтобы наверняка проверить, можно выполнить в командной строке `curl http://docker-registry.lan:5000/v2/`, если ответ `{}` (а у меня он), значит авторизации нет. Если бы была, то в пайплайне нужно было бы заполнить данные для логина + задать сами переменные (скорее всего, в настройках проекта).
- 
-Рядом создаю докерфайл:
-```
-nano Dockerfile
-```
- 
-Наполняю простым содержимым:
-```
-FROM alpine:latest
-COPY bigfile.dat /app/bigfile.dat
-```
+* В первые прогоны работало без, потом добавила
+      ```
+      - "--registry-mirror=https://mirror.gcr.io"
+      - "--dns=8.8.8.8"
+      - "--dns=1.1.1.1"
+      ```
  
 Сохраняю изменения и делаю пуш
 ```bash
 git add .
-git commit -m "добавила .gitlab-ci.yml + Dockerfile"
+git commit -m "добавила Dockerfile + .gitlab-ci.yml"
 git push -u origin main
 ```
  
@@ -3455,60 +3463,9 @@ services:
     command:
       - "--tls=false"
       - "--insecure-registry=docker-registry.lan:5000"
-
-variables:
-  IMAGE_TAG: "docker-registry.lan:5000/stress/image-$CI_PIPELINE_ID"
-  DOCKER_TLS_CERTDIR: ""
-  DOCKER_HOST: "tcp://docker:2375"
-
-build-and-push-job:
-  stage: build_and_push
-  script: |
-    i=1
-    while :; do
-      TAG="${IMAGE_TAG}"
-      dd if=/dev/urandom of=bigfile.dat bs=1M count=2048
-      docker build -t "$TAG" .
-      docker push "$TAG"
-      echo "Образ запушен в $i раз"
-      i=$((i+1))
-    done
-```
- 
-Пуш:
-```bash
-git add .
-git commit -m "добавила цикл в .gitlab-ci.yml"
-git push -u origin main
-```
- 
-**Преобразование файлов.**
-Первый образ пушился долго. Как я поняла, если перенести генерацию случайного файла в Докерфайл, то процесс пойдет быстрее, так как гитлаб не будет работать с таким большим контекстом в 2 ГБ.
-
-Поэтоу я обновила Докерфайл:
-```
-FROM alpine:3.20
-
-# Размер файла в МБ
-ARG SIZE_MB=2048
-
-RUN mkdir -p /app \
- && dd if=/dev/urandom of=/app/bigfile.dat bs=1M count=${SIZE_MB}
-```
- 
-И обновила файл пайплайна:
-```yaml
-image: docker:latest
-
-stages:
-  - build_and_push
-
-services:
-  - name: docker:dind
-    alias: docker
-    command:
-      - "--tls=false"
-      - "--insecure-registry=docker-registry.lan:5000"
+      - "--registry-mirror=https://mirror.gcr.io"
+      - "--dns=8.8.8.8"
+      - "--dns=1.1.1.1"
 
 variables:
   IMAGE_TAG: "docker-registry.lan:5000/stress/image-$CI_PIPELINE_ID"
@@ -3530,9 +3487,14 @@ build-and-push-job:
     done
 ```
  
-Затем снова пуш в репозиторий.
- 
-Итого: новый раннер с циклом работает, в реестре уже было два образа, успешно загрузился еще один. В Заббикс пришел алерт:
+Пуш:
+```bash
+git add .
+git commit -m "добавила цикл в .gitlab-ci.yml"
+git push -u origin main
+```
+  
+Новый раннер с циклом работает, в реестре уже было два образа, успешно загрузился еще один. В Заббикс пришел алерт:
 ![alt text](image-269.png)
  
 После этого пуши стали тормозить и срываться, раннер падает с ошибкой `HTTP 500 Internal Server Error` при пуше. Я подключилась к серверу с докер-регистри и проверила место командой:
@@ -3558,27 +3520,43 @@ du -xh -d1 -x /srv/registry/docker/registry/v2
  
 По идее задание на случай, если диск не размечен. У меня хоть и размечен, но забился корень, что плохо. То есть при планировании инфры надо либо при разметке отдельно монтировать раздел `/srv`; либо же хранить данные для контейнера регистри в вольюме, который будет находиться в отдельно-смонтированном `/var`, а не в самом корне.
  
-Как быстроее решение вижу остановку контейнера и полное удаление содержимого `/srv/registry/*`. Но для тестового прогона - это ок, а для прода нет. Беру время осмотреться, какие еще есть варианты.
-
-
+Как быстроее решение проблемы:
  
+1. Останавливаю реестр
+```bash
+docker stop registry
+```
+ 
+2. Создаю новый каталог на хосте с регистри:
+```bash
+sudo mkdir -p /var/lib/registry
+```
+ 
+3. Переношу данные со старого каталога в новый
+```bash
+sudo cp -a /srv/registry/. /var/lib/registry/
+```
+ 
+* Хотела использовать rsync, но его в системе не было, и т.к. корень забит, то и поставить не смогла
+* Заняло где-то 10 минут на моей ВМ
+ 
+4. На всякий случай еще раз права:
+```bash
+sudo chown -R 1000:1000 /var/lib/registry
+```
 
-
-
-
-
-
-
-
-
-
---
-
----
-Нужная метрика в заббиксе: monitoring -> hosts -> docker-registry -> triggers:
-![alt text](image-265.png)
-
-
-
-
-
+5. Удаляю старый контейнер:
+```bash
+docker rm registry
+```
+ 
+6. Пересоздаю контейнер с новым томом:
+```bash
+docker run -d --name registry --restart always \
+  -p 5000:5000 \
+  -p 5001:5001 \
+  -v /var/lib/registry:/var/lib/registry:Z \
+  -v /etc/docker/registry/config.yml:/etc/docker/registry/config.yml:ro \
+  registry:2
+```
+ 
